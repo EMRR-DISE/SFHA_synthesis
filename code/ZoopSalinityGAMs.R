@@ -281,3 +281,196 @@ ggplot(ps_conversions_plot, aes(x=SalSurf, y=median, ymin=l95, ymax=u95))+
   theme_bw()+
   theme(axis.text.x=element_text(angle=45, hjust=1))
 
+### Residuals ##########################################################
+
+#now calculate the difference between model predicted biomass and atual biomass
+#I"m not sure the best way, but I think this works
+pseudo_recent_wpred = mutate(pseudo_recent, Sal = SalSurf, SalSurf = round(SalSurf, digits =1)) %>%
+  left_join(ps_conversions_plot) %>%
+  mutate(residual = median - BPUE)
+
+ggplot(pseudo_recent_wpred, aes(x = as.factor(Month), y = residual, fill = Action, color = Action))+
+  geom_boxplot()+
+  scale_color_manual(values = c("darkred", "darkgreen", "blue", "grey"))+
+  facet_wrap(~Region)
+
+
+ggplot(pseudo_recent_wpred, aes(x = as.factor(Month), y = residual, fill = YrType, color = YrType))+
+  geom_boxplot()+
+  scale_color_manual(values = c("darkred", "darkgreen", "blue", "purple", "pink"))+
+  facet_wrap(~Region)+
+  geom_hline(yintercept = 0, linetype =2)
+
+
+ggplot(pseudo_recent_wpred, aes(x = Index, y = residual, fill = YrType, color = YrType))+
+  geom_point()+
+  scale_color_manual(values = c("darkred", "darkgreen", "blue", "purple", "pink"))+
+  facet_wrap(~Region)+
+  geom_hline(yintercept = 0, linetype =2)
+
+#OK, now do it with flow instead of salinity
+
+precent_wpred = left_join(pseudo_recent_wpred, DF)
+
+
+ggplot(precent_wpred , aes(x = log(OUT), y = residual))+
+  geom_smooth(method = "lm")+
+  geom_point(aes(color = YrType, fill = YrType))+
+  scale_color_manual(values = c("darkred", "darkgreen", "blue", "purple", "pink"))+
+  facet_wrap(~Region)+
+  geom_hline(yintercept = 0, linetype =2)
+
+#THEY GET WASHED DOWNSTREAM!!!
+ggplot(precent_wpred , aes(x = log(OUT), y = residual))+
+  geom_smooth(method = "lm")+
+  geom_point(aes(color = Action))+
+  scale_color_manual(values = c("darkred", "darkgreen", "blue", "purple", "pink"))+
+  facet_wrap(~Region)+
+  geom_hline(yintercept = 0, linetype =2)
+
+ggplot(precent_wpred , aes(x = log(OUT), y = residual))+
+  geom_smooth(method = "lm")+
+  geom_point(aes(color = Region))+
+  scale_color_manual(values = c("darkred", "darkgreen", "blue", "purple", "pink"))+
+  facet_wrap(~Action)+
+  geom_hline(yintercept = 0, linetype =2)
+
+#Oh, this is interesting. During the years with fall x2 actions the model fits pretty good regardless of flow
+
+############ what other taxa increase with flow? ##################
+
+
+zoop_data_all<-Zoopsynther(Data_type="Community", Sources=c("EMP", "STN", "20mm", "FMWT"), 
+                       Time_consistency = FALSE, Years = c(1995:2022))
+zoop_groups<-read_csv(here("Data/zoopcrosswalk2.csv"), col_types=cols_only(Taxlifestage="c", IBMR="c"))%>%
+  distinct()
+
+zoopsall = zoop_data_all %>%
+  mutate(Taxlifestage=str_remove(Taxlifestage, fixed("_UnID")))%>%
+  filter(!is.na(Longitude), !is.na(SalSurf),
+    !(SizeClass=="Meso" & #eliminating species which are counted in meso and micro and retained better in the micro net from the meso calcs
+        
+        Taxlifestage%in%c("Asplanchna Adult", "Copepoda Larva","Cyclopoida Juvenile", "Eurytemora Larva", "Harpacticoida Undifferentiated",
+                          "Keratella Adult", "Limnoithona Adult", "Limnoithona Juvenile", "Limnoithona sinenesis Adult", "Limnoithona tetraspina
+                                    Adult", "Oithona Adult", "Oithona Juvenile", "Oithona davisae Adult", "Polyarthra Adult","Pseudodiaptomus Larva", 
+                          "Rotifera Adult", "Sinocalanus doerrii Larva", "Synchaeta Adult", "Synchaeta bicornis Adult", "Trichocerca Adult")) &
+      
+      !(SizeClass=="Micro" &Taxlifestage%in%c("Cirripedia Larva", "Cyclopoida Adult", "Oithona similis")) & #removing categories better retained in meso net from micro net matrix
+      (is.na(Order) | Order!="Amphipoda") & # Remove amphipods
+      (is.na(Order) | Order!="Mysida" | Taxlifestage=="Hyperacanthomysis longirostris Adult"))%>% #Only retain Hyperacanthomysis longirostris
+  mutate(Taxlifestage=recode(Taxlifestage, `Synchaeta bicornis Adult`="Synchaeta Adult", # Change some names to match to biomass conversion dataset
+                             `Pseudodiaptomus Adult`="Pseudodiaptomus forbesi Adult",
+                             `Acanthocyclops vernalis Adult`="Acanthocyclops Adult"))%>%
+  left_join(zoop_groups, by="Taxlifestage")%>% # Add IBMR categories
+   group_by(IBMR)%>%
+  mutate(flag=if_else(all(c("Micro", "Meso")%in%SizeClass), "Remove", "Keep"))%>% # This and the next 2 lines are meant to ensure that all categories are consistent across the surveys. Since only EMP samples microzoops, only EMP data can be used for categories that include both micro and mesozoops.
+  ungroup()%>%
+  filter(!(flag=="Remove" & Source!="EMP"))%>%
+  select(SampleID, Station, Latitude, Longitude, SalSurf, Date, Year, IBMR, CPUE)%>%
+  group_by(across(-CPUE))%>%
+  summarise(CPUE=sum(CPUE), .groups="drop")%>% # Sum each IBMR categories
+  st_as_sf(coords=c("Longitude", "Latitude"), crs=4326)%>%
+  st_transform(crs=st_crs(Regions)) %>% 
+  st_join(Regions %>%
+            select(Region)) %>%
+  st_drop_geometry() %>% 
+  filter(!is.na(Region))%>%
+  mutate(doy=yday(Date), #Day of year
+         Month=month(Date), # Month
+         Year_fac=factor(Year), # Factor year for model random effect
+         Station_fac=factor(Station), # Factor station for model random effect
+         across(c(SalSurf, doy), list(s=~(.x-mean(.x))/sd(.x))), # Center and standardize predictors
+         CPUE_log1p=log(CPUE+1)) # log1p transform BPUE for model
+
+ggplot(zoopsall, aes(x = SalSurf, y = CPUE, color = Region))+
+  facet_grid(IBMR~Month, scales = "free_y")+
+  geom_smooth(method = "lm")
+
+ggplot(zoopsall, aes(x = SalSurf, y =  CPUE_log1p, color = Region))+
+  facet_wrap(~IBMR, scales = "free_y")+
+  geom_smooth(method = "lm")
+
+ggplot(filter(zoopsall, Month %in% c(6:10)), aes(x = SalSurf, y =  CPUE_log1p, color = Region))+
+  facet_wrap(~IBMR, scales = "free_y")+
+  geom_smooth(method = "gam", formula = y ~ s(x, bs = "cs", k = 5))+
+  coord_cartesian(xlim = c(0,5))
+#why are mysids so weird?
+
+#are they better if I take monthly averages to deal with stuff?
+
+mysave = filter(zoopsall, IBMR == "mysid") %>%
+  group_by(Year, Month, Region) %>%
+  summarize(SalSurf = mean(SalSurf), CPUE = mean(CPUE), logCPUE = mean(CPUE_log1p))
+
+ggplot(mysave, aes(x = SalSurf, y = logCPUE)) +
+  geom_smooth(method = "gam", formula = y ~ s(x, bs = "cs", k = 4))+
+  facet_wrap(~Region)
+#OK, so they definitely have a peak in mid salinities. 
+
+#do they increase with flow?
+mysave = left_join(mysave, yrs)
+
+ggplot(mysave, aes(x = Index, y = logCPUE)) +
+  geom_smooth(method = "gam", formula = y ~ s(x, bs = "cs", k = 4))+
+  geom_point()+
+  facet_grid(Month~Region, scales = "free_y")
+
+#that was confusing, let's drill down more
+
+load("data/Dayflow_allw2023.RData")
+
+DF = Dayflow %>%
+  mutate(Month = month(Date)) %>%
+  group_by( Year, Month) %>%
+  filter(OUT >1) %>%
+  summarize(OUT = mean(OUT, na.rm =T)) 
+
+mysave = left_join(mysave, DF)
+
+ggplot(filter(mysave, Month %in% c(6:10)), aes(x = log(OUT), y = logCPUE)) +
+  geom_smooth(method = "gam", formula = y ~ s(x, bs = "cs", k = 4))+
+  geom_point()+
+  facet_grid(Month~Region, scales = "free_y")
+
+
+ggplot(filter(mysave, Month %in% c(6:10)), aes(x = log(OUT), y = logCPUE, color = Month)) +
+  geom_smooth(method = "gam", formula = y ~ s(x, bs = "cs", k = 4))+
+  geom_point()+
+  facet_wrap(~Region, scales = "free_y")
+#Check drought paper
+# seem to increase with outflow, but keep the peak at around 3 or 4
+
+
+acave = filter(zoopsall, IBMR == "acartela") %>%
+  group_by(Year, Month, Region) %>%
+  summarize(SalSurf = mean(SalSurf), CPUE = mean(CPUE), logCPUE = mean(CPUE_log1p))
+
+ggplot(acave, aes(x = SalSurf, y = logCPUE)) +
+  geom_smooth(method = "gam", formula = y ~ s(x, bs = "cs", k = 4))+
+  facet_wrap(~Region)
+#OK, so they definitely have a peak in mid salinities. 
+
+acave = left_join(acave, DF)
+
+ggplot(acave, aes(x = log(OUT), y = logCPUE)) +
+  geom_smooth(method = "gam", formula = y ~ s(x, bs = "cs", k = 4))+
+  facet_wrap(~Region)
+#So acartiella definitely decrease with outflow. 
+
+
+#now limno
+limave = filter(zoopsall, IBMR == "limno") %>%
+  group_by(Year, Month, Region) %>%
+  summarize(SalSurf = mean(SalSurf), CPUE = mean(CPUE), logCPUE = mean(CPUE_log1p))
+
+ggplot(limave, aes(x = SalSurf, y = logCPUE)) +
+  geom_smooth(method = "gam", formula = y ~ s(x, bs = "cs", k = 4))+
+  facet_wrap(~Region)
+#OK, so they definitely have a peak in mid salinities. 
+
+limave = left_join(limave, DF)
+
+ggplot(limave, aes(x = log(OUT), y = logCPUE)) +
+  geom_smooth(method = "gam", formula = y ~ s(x, bs = "cs", k = 4))+
+  facet_wrap(~Region)
+#So limno also definitely decreases with outflow 

@@ -102,7 +102,7 @@ opsbyyear = group_by(allops, Season,Year2) %>%
   summarize(ndays = length(ACTION[which(ACTION == "Tidal")]))
 
 DFsum2 = left_join(DFsum, opsbyyear) %>%
-  left_join(yrs, by = c("Year2"="WY"))
+  left_join(yrs, by = c("Year2"="Year"))
 
 ##################################################
 #how does this relate to salinity at Beldens'?
@@ -122,7 +122,7 @@ BDL2 = mutate(BDL, Salinity = ec2pss(Value/1000, 25), Year = year(ObsDate), Mo =
 DFsum2_wsal = left_join(DFsum2, BDL2)
 
 ggplot(DFsum2_wsal, aes(x = X2, y = BDL))+
-  geom_point(aes(color = `Yr-type`))+
+  geom_point(aes(color = `YrType`))+
   geom_smooth(method = "lm")+
   facet_wrap(~Season)
 
@@ -144,40 +144,44 @@ plot(allEffects(lm1))
 
 #Smelt caught in summer and fall versus X2 and gate operations
 #pull all sme\lt catch from deltafish?
-library(deltafish)
-create_fish_db()
+# library(deltafish)
+# create_fish_db()
+# 
+# con = open_database()
+# 
+# surv <- open_survey(con)
+# fish <- open_fish(con)
+# 
+# # filter for sources and taxa of interest
+# # Also filter for dates of interest. Although dates and datetimes are stored as text in the dataset,
+# # you can still filter on them using text strings in the "YYYY-MM-DD" or "YYYY-MM-DD HH:MM:SS" format.
+# 
+# surv_FMWT <- surv %>% 
+#   filter(Source %in% c("FMWT", "EDSM", "DJFMP", "STN", "SKT", "20mm", "Suisun") & Date > "2010-01-01")
+# 
+# fish_smelt <- fish %>% 
+#   filter(Taxa %in% c("Hypomesus transpacificus"))
+# 
+# 
+# # do a join and collect_data the resulting data frame
+# # collect_data executes the sql query, converts Date and Datetime columns to the correct format and timezone, and gives you a table
+# df <- left_join(surv_FMWT, fish_smelt) %>% 
+#   collect_data() 
+# # close connection to database
+# close_database(con)
+# 
+# #OK, what is the total catch of smelt in suisun and CPUE of smelt in suisun by year?
+# 
+# smelt = df %>%
+#   filter(!is.na(Longitude)) %>%
+#   st_as_sf(coords = c("Longitude", "Latitude"), crs = 4326) %>%
+#   st_transform(crs = st_crs(Regions)) %>%
+#   st_join(Regions) %>%
+#   st_drop_geometry() 
+# 
+# save(smelt, file = "data/smelt.RData")
 
-con = open_database()
-
-surv <- open_survey(con)
-fish <- open_fish(con)
-
-# filter for sources and taxa of interest
-# Also filter for dates of interest. Although dates and datetimes are stored as text in the dataset,
-# you can still filter on them using text strings in the "YYYY-MM-DD" or "YYYY-MM-DD HH:MM:SS" format.
-
-surv_FMWT <- surv %>% 
-  filter(Source %in% c("FMWT", "EDSM", "DJFMP", "STN", "SKT", "20mm", "Suisun") & Date > "2010-01-01")
-
-fish_smelt <- fish %>% 
-  filter(Taxa %in% c("Hypomesus transpacificus"))
-
-
-# do a join and collect_data the resulting data frame
-# collect_data executes the sql query, converts Date and Datetime columns to the correct format and timezone, and gives you a table
-df <- left_join(surv_FMWT, fish_smelt) %>% 
-  collect_data() 
-# close connection to database
-close_database(con)
-
-#OK, what is the total catch of smelt in suisun and CPUE of smelt in suisun by year?
-
-smelt = df %>%
-  filter(!is.na(Longitude)) %>%
-  st_as_sf(coords = c("Longitude", "Latitude"), crs = 4326) %>%
-  st_transform(crs = st_crs(Regions)) %>%
-  st_join(Regions) %>%
-  st_drop_geometry() 
+load("data/smelt.RData")
 
 smeltCPUE = filter(smelt, !is.na(Tow_volume)) %>%
   mutate(CPUE = Count/Tow_volume, Year = year(Date), Month = month(Date)) %>%
@@ -208,8 +212,27 @@ ggplot(filter(smeltCPUE, Source %in% c("SKT", "DJFMP", "EDSM"), Month %in% c(1,2
   geom_col()+
   ylab("Total spawning adults caught, Jan=April")
 
+#### smelt versus flow ###############################
 
-##################################################################################
+names(smeltCPUE)
+
+
+DF = Dayflow %>%
+  mutate(Month = month(Date)) %>%
+  group_by( Year, Month) %>%
+  filter(OUT >1) %>%
+  summarize(OUT = mean(OUT, na.rm =T)) 
+smeltCPUE2 = left_join(smeltCPUE, DF) %>%
+  group_by(Month, Year, Region, Season) %>%
+  summarize(CPUE = mean(CPUE), OUT = mean(OUT))
+
+
+ggplot(smeltCPUE2, aes(x = log(OUT), y = log(CPUE+1)))+
+  geom_point()+
+  geom_smooth(method = "lm")+
+  facet_wrap(~Season, scales = "free_y")
+
+#####Pseudodiaptomus #############################################################################
 #Pseudodiaptomus in Suisun Bay, SuisuN Marsh versus X2 and gate operations
 library(zooper)
 
