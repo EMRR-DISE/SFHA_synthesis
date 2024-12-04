@@ -126,3 +126,95 @@ testZeroInflation(bdlm2)
 plot(allEffects(bdlm2))
 #ok, so lower salintiy in the marsh gives you more of a change in zoops in the marsh than in the other regions,
 #but even suisun bay has some impcat above the X2 impact. I think. 
+library(emmeans)
+
+emtrends(bdlm2, pairwise ~ Region, var = "X2")
+emtrends(bdlm2, pairwise ~ Region, var = "Salinity")
+
+#but is this too colinear to even work?
+library(performance)
+
+#ok, this istn' working
+check_collinearity(bdlm2)
+# Model has interaction terms. VIFs might be inflated.
+# You may check multicollinearity among predictors of a model without interaction terms.
+
+bdlm2z = glmmTMB(CPUE ~ X2+Region +Salinity+ (1|Month) + (1|Year),  family=nbinom2, data = pseudo2) 
+summary(bdlm2z)
+check_collinearity(bdlm2z)
+plot(allEffects(bdlm2z))
+#"low correlation" interesting. I would have thought X2 was pretty darn correlated with salinity, 
+#but I guess not too much
+
+###########BDL versus X2#############
+
+BDLX2 = left_join(BDLx, DF) %>%
+  left_join(yrs)
+ggplot(BDLX2, aes(x = X2, y = Salinity))+ geom_point()+
+  geom_smooth(method = "lm")
+
+ggplot(BDLX2, aes(x = X2, y = Salinity))+ geom_point(aes(color = as.factor(Year)))+
+  geom_smooth(method = "lm")
+
+ggplot(BDLX2, aes(x = X2, y = Salinity, color = YrType))+ geom_point()+
+  geom_smooth()
+
+ggplot(BDLX2, aes(x = log(X2), y = Salinity, color = YrType))+ geom_point()+
+  geom_smooth()
+
+
+#Ok, so below a certain level of X2, salnity at BDL is basically zero, 
+#but you would expect pseudos to keep increasing, right? Maybe?
+ggplot(pseudo2, aes(x = X2, y = logCPUE))+
+  facet_wrap(~Region)+
+  geom_point()+
+  geom_smooth(method = "lm")
+
+
+ggplot(filter(pseudo2, X2 <70), aes(x = X2, y = logCPUE))+
+  facet_wrap(~Region)+
+  geom_point()+
+  geom_smooth(method = "lm")
+
+ggplot(filter(pseudo2, X2 >70), aes(x = X2, y = logCPUE))+
+  facet_wrap(~Region)+
+  geom_point()+
+  geom_smooth(method = "lm")
+#yeah, but it's messy
+
+bdlm70 = glmmTMB(CPUE ~ X2*Region + (1|Month),  family=nbinom2, data = filter(pseudo2, X2<70)) 
+summary(bdlm70)
+plot(allEffects(bdlm70))
+#soooo, I think this is saying that really low X2 causes decreases in pseudos in the river, 
+#doesn't change the suidun areas at alll. Weird.
+
+
+bdlm70p = glmmTMB(CPUE ~ X2*Region + (1|Month)+ (1|Year),  family=nbinom2, data = filter(pseudo2, X2>=70)) 
+summary(bdlm70p)
+plot(allEffects(bdlm70p))
+
+# I could limit this to just higher X2 values, or i could to to a GAM. Or something else. 
+#But I think the origional plot of pseudos versus X2 shows a pretty good linear relationship over
+#the whold thing, so maybe just go with that.
+
+bdlm2z = glmmTMB(CPUE ~ X2+Region +Salinity+ (1|Month) + (1|Year),  family=nbinom2, data = pseudo2) 
+summary(bdlm2z)
+check_collinearity(bdlm2z)
+plot(allEffects(bdlm2z))
+
+###### Salinity Bins instead of Region ###########################
+
+pseudo2 = mutate(pseudo2, SalBin = case_when(SalSurf < 0.5 ~ "1-Fresh",
+                                             SalSurf >=0.5 & SalSurf < 6 ~ "2 LSZ",
+                                             SalSurf >=6  ~ "3 high"),
+                 SalBin2 = case_when(SalSurf < 0.1 ~ "1-Fresher",
+                                     SalSurf >= 0.1 &SalSurf < 0.5 ~ "1.5-Fresh",
+                                    SalSurf >=0.5 & SalSurf < 6 ~ "2 LSZ",
+                                    SalSurf >=6  ~ "3 high"))
+
+sallm = glmmTMB(CPUE ~ X2*SalBin2 + (1|Month) + (1|Year),  family=nbinom2, data = pseudo2) 
+summary(sallm)
+plot(allEffects(sallm))
+emtrends(sallm,  pairwise ~ SalBin2, var = "X2")
+#huh, this has pseudos increasing with increasing X2 even in the freshwater zone. 
+#overall, we definitely get more pseudos in higher flows regardless of slinity zone
