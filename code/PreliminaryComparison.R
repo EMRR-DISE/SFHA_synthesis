@@ -190,14 +190,37 @@ smeltCPUE = filter(smelt, !is.na(Tow_volume)) %>%
   group_by(Source, Region, Year, Month) %>%
   summarize(CPUE = mean(CPUE, na.rm =T), Count = sum(Count)) %>%
   mutate(Season = case_when(Month %in% c(1,2,3,4,5) ~ "Spring",
+                            Month %in% c(2,3,4,5) ~ "Spring",
                             Month %in% c(6,7,8)~ "Summer",
-                            Month %in% c(9,10,11, 12) ~ "Fall"))
+                            Month %in% c(11,12,1)~ "Winter",
+                            Month %in% c(9,10) ~ "Fall"))
 
 ggplot(filter(smeltCPUE, !is.na(Region)), aes(x = Year, y = CPUE, fill = Source))+
   facet_grid(Region~Season)+
   geom_col()
 
 ggplot(filter(smeltCPUE, !is.na(Region)), aes(x = Year, y = log(Count+1), fill = Source))+
+  facet_grid(Region~Season)+
+  geom_col()
+
+ggplot(filter(smeltCPUE, !is.na(Region), Season %in% c("Fall", "Summer")), aes(x = Year, y = log(CPUE+1), fill = Source))+
+  facet_grid(Region~Season)+
+  geom_col()
+
+
+ggplot(filter(smeltCPUE, !is.na(Region), Season %in% c("Fall", "Summer")), 
+       aes(x = Year, y = Count, fill = Source))+
+  facet_grid(Region~Season)+
+  geom_col()
+
+test = filter(smeltCPUE, !is.na(Region), Season %in% c("Fall", "Summer"))
+
+ggplot(filter(smeltCPUE, !is.na(Region), Source != "DJFMP", Season %in% c("Fall", "Summer")), aes(x = Year, y = log(CPUE+1), fill = Source))+
+  facet_grid(Season~Region, scales = "free_y")+
+  geom_col()
+
+
+ggplot(filter(smeltCPUE, !is.na(Region), Source != "DJFMP", Season == "Fall"), aes(x = Year, y = log(Count+1), fill = Source))+
   facet_grid(Region~Season)+
   geom_col()
 

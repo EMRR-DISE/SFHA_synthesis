@@ -8,7 +8,9 @@ library(zooper)
 library(glmmTMB)
 library(DHARMa)
 library(conflicted)
+library(cder)
 library(sf)
+library(wql)
 
 conflicts_prefer(lmerTest::lmer)
 conflicts_prefer(dplyr::filter)
@@ -146,7 +148,46 @@ plot(allEffects(bdlm2z))
 #"low correlation" interesting. I would have thought X2 was pretty darn correlated with salinity, 
 #but I guess not too much
 
-###########BDL versus X2#############
+###############predictions ####################
+#how low does X2 need to be in order so see similar Pseudodiaptomus as the river?
+#median river Psudo abundance
+RiverPseudo =  filter(pseudo2, Region == "River") %>%
+  group_by(Month, Year) %>%
+  summarize(RiverCPUE = median(CPUE))
+#I may want to break it out by season and year, but start with this
+
+#
+X2s = data.frame(X2 = c(60:90))
+Years = data.frame(Year = c(2011:2023))
+newdat = data.frame(Region = c(rep("Suisun Marsh", 5),rep("Suisun Bay", 5), rep("Grizzly Bay", 5)),
+                    Month = rep(c(6:10),3)) %>%
+  merge(X2s) %>%
+  merge(Years) %>%
+  merge(RiverPseudo)
+
+Model_output = newdat %>%
+  bind_cols(Predicted_CPUE = predict(zm3, type = "response", newdata = newdat))
+
+ggplot(Model_output, aes(x = X2, y = log(Predicted_CPUE), color = as.factor(Year))) +
+  facet_wrap(~Month)+
+  geom_point()+
+  geom_hline(aes(yintercept = log(RiverCPUE)))
+
+#OK, now calculate the X2-pseudo relationship for each motnh and year. Same slope, jsut differnt intercepts
+
+X2mods = group_by(Model_output, Month, Year, Region, RiverCPUE) %>%
+  summarize(slope = summary(lm(log(Predicted_CPUE) ~ X2))$coefficients[2,1],
+            intercept = summary(lm(log(Predicted_CPUE) ~ X2))$coefficients[1,1]) %>%
+  mutate(X2needed = (log(RiverCPUE)-intercept)/slope)
+
+
+ggplot(X2mods, aes(x = Month, y = Year, fill = X2needed))+
+  geom_tile()+
+  geom_text(aes(label = round(X2needed)))+
+  facet_wrap(~Region)+
+  scale_fill_viridis_c()
+
+###########BDL versus X2########################BDL versus X2#############Years
 
 BDLX2 = left_join(BDLx, DF) %>%
   left_join(yrs)
@@ -181,6 +222,12 @@ ggplot(filter(pseudo2, X2 >70), aes(x = X2, y = logCPUE))+
   geom_point()+
   geom_smooth(method = "lm")
 #yeah, but it's messy
+
+#just summer-fall
+
+ggplot(filter(BDLX2, month(Date) %in% c(6:10)), aes(x = log(X2), y = log(Salinity), color = YrType))+ geom_point()+
+  geom_smooth(method = "lm")
+
 
 bdlm70 = glmmTMB(CPUE ~ X2*Region + (1|Month),  family=nbinom2, data = filter(pseudo2, X2<70)) 
 summary(bdlm70)

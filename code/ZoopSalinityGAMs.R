@@ -210,7 +210,15 @@ ggplot(ps_conversions_plot, aes(x=SalSurf, y=median, ymin=l95, ymax=u95))+
   theme_bw()+
   theme(axis.text.x=element_text(angle=45, hjust=1))
 
-
+#summer fall only
+ggplot(filter(ps_conversions_plot, Month %in% c(6:10)), aes(x=SalSurf, y=median, ymin=l95, ymax=u95))+
+  geom_ribbon(alpha=0.4)+
+  geom_line()+
+  ylab("Pseudodiaptomus biomass (log scale)")+
+  facet_grid(Region~month(Month, label=T))+
+  scale_fill_viridis_d()+
+  theme_bw()+
+  theme(axis.text.x=element_text(angle=45, hjust=1))
 ############ More recent data ############################
 
 
@@ -314,8 +322,9 @@ precent_wpred = left_join(pseudo_recent_wpred, DF)
 
 
 ggplot(precent_wpred , aes(x = log(OUT), y = residual))+
-  geom_smooth(method = "lm")+
   geom_point(aes(color = YrType, fill = YrType))+
+  geom_smooth(method = "lm")+
+  
   scale_color_manual(values = c("darkred", "darkgreen", "blue", "purple", "pink"))+
   facet_wrap(~Region)+
   geom_hline(yintercept = 0, linetype =2)
@@ -425,6 +434,7 @@ DF = Dayflow %>%
   filter(OUT >1) %>%
   summarize(OUT = mean(OUT, na.rm =T)) 
 
+
 mysave = left_join(mysave, DF)
 
 ggplot(filter(mysave, Month %in% c(6:10)), aes(x = log(OUT), y = logCPUE)) +
@@ -474,3 +484,16 @@ ggplot(limave, aes(x = log(OUT), y = logCPUE)) +
   geom_smooth(method = "gam", formula = y ~ s(x, bs = "cs", k = 4))+
   facet_wrap(~Region)
 #So limno also definitely decreases with outflow 
+
+zoopsallflow = zoopsall %>%
+  group_by(Year, Month, Region, IBMR) %>%
+  summarize(CPUE = mean(CPUE), logCPUE = log(CPUE +1)) %>%
+  left_join(DF)
+
+ggplot(filter(zoopsallflow, Month %in% c(6:10)), aes(x = log(OUT), y =  logCPUE, color = Region))+
+  facet_wrap(~IBMR, scales = "free_y")+
+  geom_smooth(method = "gam", formula = y ~ s(x, bs = "cs", k = 5))
+
+
+notincluded = filter(zoopsall, is.na(IBMR))
+

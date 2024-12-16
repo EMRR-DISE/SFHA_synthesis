@@ -15,14 +15,26 @@ ggplot(health, aes(x = as.factor(cohort...7), y = cf)) +
   geom_boxplot()+
   ylab("Condition Factor")
 
-ggplot(filter(health, season %in% c("Summer", "Fall"), fork_length <70), aes(x = as.factor(cohort...7), y = cf)) +
+ggplot(filter(health, season %in% c("Summer", "Fall"), 
+              fork_length <70), aes(x = as.factor(cohort...7), y = cf)) +
   facet_wrap(~region1)+
   geom_boxplot()+
   ylab("Condition Factor")
 
-ggplot(filter(health, season %in% c("Summer", "Fall"), fork_length <70), aes(x = region1, y = cf, fill = season)) +
+ggplot(filter(health, season %in% c("Summer", "Fall"), fork_length <70, !is.na(region)), aes(x = region1, y = cf, fill = season)) +
  # facet_wrap(~region1)+
   geom_boxplot()+
+  ylab("Condition Factor")
+
+ggplot(filter(health, season %in% c("Summer", "Fall"), fork_length <70, !is.na(region)), aes(x = hsi, y = cf, color = region)) +
+  #facet_wrap(~region1)+
+  geom_point()+
+  ylab("Condition Factor")
+
+ggplot(filter(health, season %in% c("Summer", "Fall"), fork_length <70), aes(x = hsi, y = cf, color = as.factor(cohort...7))) +
+  facet_wrap(~season)+
+  geom_point()+
+  stat_ellipse()+
   ylab("Condition Factor")
 
 ######## Growth and stuff from Otoliths #####################
