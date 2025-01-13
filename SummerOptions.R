@@ -27,19 +27,32 @@ Dayf = mutate(Dayflow, Month = month(Date)) %>%
 ggplot(Dayf, aes(x = Year, y = OUT, fill = YrType))+
   geom_col(color = "black")+
   geom_hline(yintercept = 10214)+
+  geom_hline(yintercept = 15000, linetype =2)+
   scale_fill_manual(values = c("firebrick3", "darkorange", "yellow2", "palegreen2", "skyblue"))+
   ylab("Average summer outflow, cfs")
 
 Vol10000cfs = 10214*86400*92/43560
+Vol15000cfs = 15214*86400*92/43560
 
 Dayf = mutate(Dayf, SummerVolume = OUT*86400*92/43560, VolumeDiff = Vol10000cfs-SummerVolume,
               VolumeDiff = case_when(VolumeDiff <0 ~ 0,
-                                     TRUE ~ VolumeDiff)) 
+                                     TRUE ~ VolumeDiff),
+              VolumeDiff5 = Vol15000cfs-SummerVolume,
+              VolumeDiff5 = case_when(VolumeDiff5 <0 ~ 0,
+                                     TRUE ~ VolumeDiff5)) 
 
 ggplot(Dayf, aes(x = Year, y = VolumeDiff/1000, fill = YrType))+
   geom_col(color = "black")+
   scale_fill_manual(values = c("firebrick3", "darkorange", "yellow2", "palegreen2", "skyblue"))+
-  ylab("Additional Volume needed in TAF")
+  ylab("Additional Volume needed in TAF")+
+  coord_cartesian(ylim = c(0,2100))
+
+
+ggplot(Dayf, aes(x = Year, y = VolumeDiff5/1000, fill = YrType))+
+  geom_col(color = "black")+
+  scale_fill_manual(values = c("firebrick3", "darkorange", "yellow2", "palegreen2", "skyblue"))+
+  ylab("Additional Volume needed in TAF")+
+  coord_cartesian(ylim = c(0,2100))
 
 
 ggplot(Dayf, aes(x = Year, y = X2m, color = YrType))+
@@ -50,3 +63,28 @@ ggplot(Dayf, aes(x = Year, y = X2m, color = YrType))+
 
 
 ggplot(Dayf, aes(x = X2m, y = OUT)) + geom_point()+ geom_smooth()
+
+
+######################################################
+#What is the salinity field like in the summer of wet and dry years?
+
+sal = cdec_query(c("BDL", "CSE", "MRZ", "PTO", "RVB"), 100, "E", start.date = ymd("2000-01-01"), end.date = today())
+salx = cdec_query(c("RYC", "GZL", "MAL"), 100, "E", start.date = ymd("2000-01-01"), end.date = today())
+
+sal = bind_rows(sal, salx)
+
+saldaily = mutate(sal, Date = date(ObsDate), Year = year(Date), DOY = yday(Date)) %>%
+  filter(Value>0) %>%
+  group_by(Date, Year, DOY, StationID) %>%
+  summarize(Sal = mean(Value, na.rm =T)) %>%
+  mutate(Salinity = ec2pss(Sal/1000, 25)) %>%
+  left_join(yrs)
+
+ggplot(saldaily, aes(x = DOY, y = Salinity, group = Year, color = YrType)) + geom_line()+
+  facet_wrap(~StationID)+
+  coord_cartesian(xlim = c(150, 300))+
+  scale_x_continuous(breaks = c(153,183, 214, 245, 275), labels = c("Jun", "Jul", "Aug", "Sep", "Oct"))+
+  geom_hline(yintercept = 6, linetype =2, color = "black", size =1)+
+  geom_vline(xintercept = c(153, 245))+
+  scale_color_manual(values = c("firebrick3", "darkorange", "yellow3", "green3", "skyblue2"))+
+  theme_bw()

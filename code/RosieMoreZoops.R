@@ -187,6 +187,21 @@ ggplot(X2mods, aes(x = Month, y = Year, fill = X2needed))+
   facet_wrap(~Region)+
   scale_fill_viridis_c()
 
+#Now what is the difference between X2 needed and X2 actual?
+X2actual = select(Dayflow, Date, Year, X2) %>%
+  mutate(Month = month(Date)) %>%
+  group_by(Month, Year) %>%
+  summarize(X2 = mean(X2, na.rm =T))
+
+X2mods = left_join(X2mods, X2actual) %>%
+  mutate(X2diff = X2needed-X2)
+
+ggplot(X2mods, aes(x = Month, y = Year, fill = X2diff))+
+  geom_tile()+
+  geom_text(aes(label = round(X2diff), color = X2diff))+
+  facet_wrap(~Region)+
+  scale_fill_viridis_c(option = "B")+
+  scale_color_viridis_c(option = "B", begin =1, end =0, guide = NULL)
 ###########BDL versus X2########################BDL versus X2#############Years
 
 BDLX2 = left_join(BDLx, DF) %>%

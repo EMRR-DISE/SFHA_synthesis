@@ -365,8 +365,8 @@ zoopsall = zoop_data_all %>%
                           "Rotifera Adult", "Sinocalanus doerrii Larva", "Synchaeta Adult", "Synchaeta bicornis Adult", "Trichocerca Adult")) &
       
       !(SizeClass=="Micro" &Taxlifestage%in%c("Cirripedia Larva", "Cyclopoida Adult", "Oithona similis")) & #removing categories better retained in meso net from micro net matrix
-      (is.na(Order) | Order!="Amphipoda") & # Remove amphipods
-      (is.na(Order) | Order!="Mysida" | Taxlifestage=="Hyperacanthomysis longirostris Adult"))%>% #Only retain Hyperacanthomysis longirostris
+      (is.na(Order) | Order!="Amphipoda") ) %>%#& # Remove amphipods
+     # (is.na(Order) | Order!="Mysida" | Taxlifestage=="Hyperacanthomysis longirostris Adult"))%>% #Only retain Hyperacanthomysis longirostris
   mutate(Taxlifestage=recode(Taxlifestage, `Synchaeta bicornis Adult`="Synchaeta Adult", # Change some names to match to biomass conversion dataset
                              `Pseudodiaptomus Adult`="Pseudodiaptomus forbesi Adult",
                              `Acanthocyclops vernalis Adult`="Acanthocyclops Adult"))%>%
@@ -390,6 +390,8 @@ zoopsall = zoop_data_all %>%
          Station_fac=factor(Station), # Factor station for model random effect
          across(c(SalSurf, doy), list(s=~(.x-mean(.x))/sd(.x))), # Center and standardize predictors
          CPUE_log1p=log(CPUE+1)) # log1p transform BPUE for model
+
+
 
 ggplot(zoopsall, aes(x = SalSurf, y = CPUE, color = Region))+
   facet_grid(IBMR~Month, scales = "free_y")+
@@ -490,10 +492,15 @@ zoopsallflow = zoopsall %>%
   summarize(CPUE = mean(CPUE), logCPUE = log(CPUE +1)) %>%
   left_join(DF)
 
-ggplot(filter(zoopsallflow, Month %in% c(6:10)), aes(x = log(OUT), y =  logCPUE, color = Region))+
-  facet_wrap(~IBMR, scales = "free_y")+
+ggplot(filter(zoopsallflow, Month %in% c(6:10), !is.na(IBMR)), 
+       aes(x = log(OUT), y =  logCPUE, color = Region))+
+  facet_wrap(~IBMR, scales = "free_y", nrow =4)+
   geom_smooth(method = "gam", formula = y ~ s(x, bs = "cs", k = 5))
 
 
 notincluded = filter(zoopsall, is.na(IBMR))
 
+ggplot()+
+  geom_sf(data = WW_Delta, fill = "lightblue", color = "grey40")+
+geom_sf(data = Regions, aes(fill = Region), alpha = 0.5)+
+    coord_sf(xlim = c(-122.1, -121.6), ylim = c(38.0, 38.25))
