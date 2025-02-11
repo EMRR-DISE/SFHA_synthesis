@@ -3,6 +3,9 @@
 library(tidyverse)
 library(readxl)
 library(RColorBrewer)
+library(lme4)
+library(lmerTest)
+library(effects)
 
 mypal = c(brewer.pal(8, "Dark2"), brewer.pal(8, "Set2"), "black", "purple", "skyblue")
 
@@ -10,11 +13,13 @@ health = read_excel("Data/Master_ordered_srdwsc_zoop.xlsx", sheet = "Master_orde
 excel_sheets("Data/Master_ordered_srdwsc_zoop.xlsx")
 metadata = read_excel("Data/Master_ordered_srdwsc_zoop.xlsx")
 
+#Condition factor
 ggplot(health, aes(x = as.factor(cohort...7), y = cf)) +
   facet_wrap(~region1)+
   geom_boxplot()+
   ylab("Condition Factor")
 
+#Summer and fall only
 ggplot(filter(health, season %in% c("Summer", "Fall"), 
               fork_length <70), aes(x = as.factor(cohort...7), y = cf)) +
   facet_wrap(~region1)+
@@ -37,7 +42,23 @@ ggplot(filter(health, season %in% c("Summer", "Fall"), fork_length <70), aes(x =
   stat_ellipse()+
   ylab("Condition Factor")
 
-######## Growth and stuff from Otoliths #####################
+#Now look at X2 versus condition factor
+ggplot(filter(health, season %in% c("Summer", "Fall")), aes(x = x2_jun_dec, y = cf)) +
+  facet_wrap(~region1)+
+  geom_point(aes(color = as.factor(cohort...7)))+
+  geom_smooth(method = "lm")+
+  ylab("Condition Factor")
+
+#What happens if we throw a linear model at it?
+hist(health$cf)
+
+cfmod1 = lm(cf ~ x2_actual + day + region1, data = filter(health, season %in% c("Summer", "Fall")))
+summary(cfmod1)
+plot(cfmod1)
+plot(allEffects(cfmod1))
+
+
+################ Growth and stuff from Otoliths #####################
 #we only have otolith data from 2011, but it's something. 
 nsmelt = filter(health, season %in% c("Summer", "Fall"), fork_length <70,
                 !is.na(gr7)) %>%
@@ -128,7 +149,7 @@ ggplot(dietfish, aes(x = Year, y = biomass, fill = Taxa))+
 
 ## Other Health Metrics #################################################
 
-
+#Hepatosomatic index
 ggplot(filter(health, season %in% c("Summer", "Fall"), hsi <3), 
        aes(x = as.factor(cohort...7), y = hsi, fill = season)) +
   facet_wrap(~region1)+
@@ -146,7 +167,7 @@ ggplot(filter(health, season %in% c("Summer", "Fall"), hsi <3),
   xlab("Year Class")
 
 
-
+#liver glycogen depletion. This is the hisology version which isn't very accurate
 
 ggplot(health, aes(x = as.factor(cohort...7), y = liver_gd)) +
   facet_wrap(~region1)+
@@ -158,3 +179,9 @@ ggplot(health, aes(x = as.factor(cohort...7), y = tag)) +
   facet_wrap(~region1)+
   geom_boxplot()+
   ylab("I don't know what tag stands for")
+
+##############################################################
+
+
+
+

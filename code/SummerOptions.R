@@ -78,13 +78,17 @@ saldaily = mutate(sal, Date = date(ObsDate), Year = year(Date), DOY = yday(Date)
   group_by(Date, Year, DOY, StationID) %>%
   summarize(Sal = mean(Value, na.rm =T)) %>%
   mutate(Salinity = ec2pss(Sal/1000, 25)) %>%
-  left_join(yrs)
+  left_join(yrs) %>%
+  filter(Year != 2025) %>%
+  mutate(Station = factor(StationID, levels = c("MRZ", "GZL", "RYC", "BDL", "MAL", "CSE", "RVB"),
+                          labels = c("Martinez", "Grizzly Bay", "Ryer Island", "Belden's Landing",
+                                     "Mallard Island", "Collinsville", "Rio Vista")))
 
 ggplot(saldaily, aes(x = DOY, y = Salinity, group = Year, color = YrType)) + geom_line()+
-  facet_wrap(~StationID)+
-  coord_cartesian(xlim = c(150, 300))+
+  facet_wrap(~Station, nrow =4)+
+  coord_cartesian(xlim = c(150, 270))+
   scale_x_continuous(breaks = c(153,183, 214, 245, 275), labels = c("Jun", "Jul", "Aug", "Sep", "Oct"))+
   geom_hline(yintercept = 6, linetype =2, color = "black", size =1)+
   geom_vline(xintercept = c(153, 245))+
   scale_color_manual(values = c("firebrick3", "darkorange", "yellow3", "green3", "skyblue2"))+
-  theme_bw()
+  theme_bw() + ylab("Daily average Salinity (PSU)") + xlab("Day of Year")

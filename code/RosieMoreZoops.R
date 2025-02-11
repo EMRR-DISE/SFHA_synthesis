@@ -266,13 +266,14 @@ plot(allEffects(bdlm2z))
 
 ###### Salinity Bins instead of Region ###########################
 
-pseudo2 = mutate(pseudo2, SalBin = case_when(SalSurf < 0.5 ~ "1-Fresh",
-                                             SalSurf >=0.5 & SalSurf < 6 ~ "2 LSZ",
+pseudo2 = mutate(pseudo2, SalBin = case_when(SalSurf < 0.5 ~ "Fresh",
+                                             SalSurf >=0.5 & SalSurf < 6 ~ "LSZ",
                                              SalSurf >=6  ~ "3 high"),
-                 SalBin2 = case_when(SalSurf < 0.1 ~ "1-Fresher",
-                                     SalSurf >= 0.1 &SalSurf < 0.5 ~ "1.5-Fresh",
-                                    SalSurf >=0.5 & SalSurf < 6 ~ "2 LSZ",
-                                    SalSurf >=6  ~ "3 high"))
+                 SalBin2 = case_when(SalSurf < 0.1 ~ "Fresh <0.1",
+                                     SalSurf >= 0.1 &SalSurf < 0.5 ~ "Freshish 0.1-0.5",
+                                    SalSurf >=0.5 & SalSurf < 6 ~ "LSZ 0.5-6",
+                                    SalSurf >=6  ~ "Salty >6"),
+                 SalBin2 = factor(SalBin2, levels = c("Fresh <0.1", "Freshish 0.1-0.5", "LSZ 0.5-6", "Salty >6"))) 
 
 sallm = glmmTMB(CPUE ~ X2*SalBin2 + (1|Month) + (1|Year),  family=nbinom2, data = pseudo2) 
 summary(sallm)
@@ -280,3 +281,84 @@ plot(allEffects(sallm))
 emtrends(sallm,  pairwise ~ SalBin2, var = "X2")
 #huh, this has pseudos increasing with increasing X2 even in the freshwater zone. 
 #overall, we definitely get more pseudos in higher flows regardless of slinity zone
+
+#################################################
+#britt wants outflow instead of X2
+
+###############predictions ####################
+#how low does outflow need to be in order so see similar Pseudodiaptomus as the river?
+
+
+#try a zero inflated negative binomial model on CPUE isntead
+pseudoreg = mutate(pseudoreg, logout = log(OUT))
+
+zm2out = glmmTMB(CPUE ~ logout*Region + (1|Month) + (1|Year), family=nbinom2, data = pseudoreg) 
+
+summary(zm2out)
+plot(allEffects(zm2out))
+#There is actually a decrease in the river when outflow is the response, whereas with X2 it's just flat.
+
+ggplot(pseudoreg, aes(x = log(OUT), y = log(CPUE+1)))+ geom_point()+ geom_smooth(method = "lm")+
+  facet_wrap(~Region)
+
+#
+OUTs = data.frame(OUT = seq(2000, 90000, by = 50)) %>%
+  mutate(logout = log(OUT))
+Years = data.frame(Year = c(2011:2023))
+newdatout = data.frame(Region = c(rep("Suisun Marsh", 5),rep("Suisun Bay", 5), rep("Grizzly Bay", 5)),
+                    Month = rep(c(6:10),3)) %>%
+  merge(OUTs) %>%
+  merge(Years) %>%
+  merge(RiverPseudo)
+
+Model_outputout = newdatout %>%
+  bind_cols(Predicted_CPUE = predict(zm2out, type = "response", newdata = newdatout))
+
+ggplot(Model_outputout, aes(x = OUT, y = Predicted_CPUE, color = as.factor(Year))) +
+  facet_grid(Region~Month)+
+  geom_line()+
+  geom_point(data = filter(pseudoreg, Region != "River", !is.na(Month)), aes(y = CPUE))+
+  coord_cartesian(ylim = c(0,60000))
+
+ggplot(Model_outputout, aes(x = OUT, y = Predicted_CPUE, color = as.factor(Year))) +
+  facet_grid(Region~Month)+
+  geom_line()+
+  geom_point(data = filter(pseudoreg, Region != "River", !is.na(Month)), aes(y = CPUE))+
+  coord_cartesian(ylim = c(0,5000), xlim = c(0,10000))
+
+#OK, now calculate the outflow-pseudo relationship for each motnh and year. Same slope, jsut differnt intercepts
+
+OUTmods = group_by(Model_outputout, Month, Year, Region, RiverCPUE) %>%
+  summarize(slope = summary(lm(log(Predicted_CPUE) ~ logout))$coefficients[2,1],
+            intercept = summary(lm(log(Predicted_CPUE) ~ logout))$coefficients[1,1]) %>%
+  mutate(OUTneeded = (log(RiverCPUE)-intercept)/slope)
+
+
+ggplot(OUTmods, aes(x = Month, y = Year, fill = OUTneeded))+
+  geom_tile()+
+  geom_text(aes(label = round(exp(OUTneeded)/1000)))+
+  facet_wrap(~Region)+
+  scale_fill_viridis_c(name = "Outflow Needed \n Thousand CFS")
+
+#Now what is the difference between X2 needed and X2 actual?
+OUTactual = select(Dayflow, Date, Year, OUT) %>%
+  mutate(Month = month(Date)) %>%
+  group_by(Month, Year) %>%
+  summarize(OUT = mean(OUT, na.rm =T))
+
+OUTmods = left_join(OUTmods, OUTactual) %>%
+  mutate(OUTdiff = exp(OUTneeded)-OUT)
+
+ggplot(OUTmods, aes(x = Month, y = Year, fill = OUTdiff))+
+  geom_tile()+
+  geom_text(aes(label = round(OUTdiff/1000), color = OUTdiff/1000))+
+  facet_wrap(~Region)+
+  scale_fill_viridis_c(option = "B")+
+  scale_color_viridis_c(option = "B", begin =1, end =0, guide = NULL)
+
+ggplot(OUTmods, aes(x = Month, y = Year, fill = OUT))+
+  geom_tile()+
+  geom_text(aes(label = round(OUT/1000), color = OUT))+
+  facet_wrap(~Region)+
+  scale_fill_viridis_c(option = "B")+
+  scale_color_viridis_c(option = "B", begin =1, end =0, guide = NULL)

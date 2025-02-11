@@ -32,6 +32,17 @@ load("Data/SMSCGRegions.RData")
 zoop_data<-Zoopsynther(Data_type="Community", Sources=c("EMP", "STN", "20mm", "FMWT"), 
                        Time_consistency = FALSE, Years = c(1972:2010), Size_class = "Meso")
 
+
+load("data/Dayflow_allw2023.RData")
+
+DF = Dayflow %>%
+  mutate(Month = month(Date)) %>%
+  group_by( Year, Month) %>%
+  filter(OUT >1) %>%
+  summarize(OUT = mean(OUT, na.rm =T)) 
+
+
+
 #Mass conversions
 zoop_mass_conversions<-read_excel(here("Data/Biomass conversions.xlsx"), sheet="Micro and Meso-zooplankton")%>%
   mutate(Taxname=case_when(Taxname=="Sinocalanus"~"Sinocalanus doerrii", # Change to help this match to zoop data
@@ -222,7 +233,7 @@ ggplot(filter(ps_conversions_plot, Month %in% c(6:10)), aes(x=SalSurf, y=median,
 ############ More recent data ############################
 
 
-#load zoop data from 1972-2010
+#load zoop data from 2011:2024
 zoop_datarecent <-Zoopsynther(Data_type="Community", Sources=c("EMP", "STN", "20mm", "FMWT"), 
                        Time_consistency = FALSE, Years = c(2011:2024), Size_class = "Meso")
 
@@ -322,12 +333,14 @@ precent_wpred = left_join(pseudo_recent_wpred, DF)
 
 
 ggplot(precent_wpred , aes(x = log(OUT), y = residual))+
-  geom_point(aes(color = YrType, fill = YrType))+
+  geom_point(aes(color = YrType))+
   geom_smooth(method = "lm")+
   
-  scale_color_manual(values = c("darkred", "darkgreen", "blue", "purple", "pink"))+
+  scale_color_manual(values = c("darkred", "darkgreen", "blue", "purple", "pink"), name = "Year Type")+
   facet_wrap(~Region)+
-  geom_hline(yintercept = 0, linetype =2)
+  geom_hline(yintercept = 0, linetype =2)+
+  xlab("Log-transformed Delta Outflow")+
+  theme_bw()
 
 #THEY GET WASHED DOWNSTREAM!!!
 ggplot(precent_wpred , aes(x = log(OUT), y = residual))+
@@ -390,7 +403,7 @@ zoopsall = zoop_data_all %>%
          Station_fac=factor(Station), # Factor station for model random effect
          across(c(SalSurf, doy), list(s=~(.x-mean(.x))/sd(.x))), # Center and standardize predictors
          CPUE_log1p=log(CPUE+1)) # log1p transform BPUE for model
-
+save(zoopsall, file = "data/zoopsall.RData")
 
 
 ggplot(zoopsall, aes(x = SalSurf, y = CPUE, color = Region))+
@@ -427,15 +440,6 @@ ggplot(mysave, aes(x = Index, y = logCPUE)) +
   facet_grid(Month~Region, scales = "free_y")
 
 #that was confusing, let's drill down more
-
-load("data/Dayflow_allw2023.RData")
-
-DF = Dayflow %>%
-  mutate(Month = month(Date)) %>%
-  group_by( Year, Month) %>%
-  filter(OUT >1) %>%
-  summarize(OUT = mean(OUT, na.rm =T)) 
-
 
 mysave = left_join(mysave, DF)
 
@@ -504,3 +508,5 @@ ggplot()+
   geom_sf(data = WW_Delta, fill = "lightblue", color = "grey40")+
 geom_sf(data = Regions, aes(fill = Region), alpha = 0.5)+
     coord_sf(xlim = c(-122.1, -121.6), ylim = c(38.0, 38.25))
+
+###########################################################################

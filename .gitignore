@@ -47,3 +47,6 @@ po/*~
 
 # RStudio Connect folder
 rsconnect/
+
+#large file
+SMSCG_wq_data_2017-2024.csv

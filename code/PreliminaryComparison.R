@@ -24,6 +24,13 @@ DFsum = group_by(DF, Season, Year2) %>%
   summarize(OUT = mean(OUT), X2 = mean(X2), CVP = mean(CVP), SWP = mean(SWP))
 
 
+#add water year type and filter to just 2010-2024
+yrsAction = left_join(DFsum, yrs, by = c("Year2" = "WY")) %>%
+  filter(Year2 >2010) %>%
+  select(Season, Year2, OUT, X2, CVP, SWP, Index, `Yr-type`, Action)
+
+write.csv(yrsAction, "YearTypes_actions.csv", row.names = FALSE)
+
 #OK, now number of days of gate operations
 #https://data.cnra.ca.gov/dataset/suisun-marsh-salinity-control-gates-log
 gates = read_excel("Data/smscg-log.xlsx")
@@ -102,7 +109,7 @@ opsbyyear = group_by(allops, Season,Year2) %>%
   summarize(ndays = length(ACTION[which(ACTION == "Tidal")]))
 
 DFsum2 = left_join(DFsum, opsbyyear) %>%
-  left_join(yrs, by = c("Year2"="Year"))
+  left_join(yrs, by = c("Year2"="WY"))
 
 ##################################################
 #how does this relate to salinity at Beldens'?
@@ -234,6 +241,10 @@ ggplot(filter(smeltCPUE, Source %in% c("SKT", "DJFMP", "EDSM"), Month %in% c(1,2
        aes(x = Year, y = Count, fill = Source))+
   geom_col()+
   ylab("Total spawning adults caught, Jan=April")
+
+
+#set some bayesian priors for prevelance of smelt. 
+#start with just two groups, flow versus not-flow
 
 #### smelt versus flow ###############################
 

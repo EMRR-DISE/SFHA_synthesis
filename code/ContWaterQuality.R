@@ -1,0 +1,92 @@
+#continuous water quality
+library(tidyverse)
+
+WQ = read_csv("data/SMSCG_wq_data_2017-2024.csv")
+
+#calculate percentage of day above or below the threshold
+
+WQsum = WQ %>%
+  select(-fluorescence, -ph, -spc, -spc_milli, -dissolvedoxygen) %>%
+  pivot_longer(cols = c(turbidity, watertemperature, salinity), names_to = "Analyte", values_to = "Value") %>%
+  mutate(Date = date(date_time_pst), Year = year(Date), Month = month(Date))
+
+WQsumave = WQsum  %>%
+  mutate(DOY = yday(Date), Month = month(Date), Season = case_when(Month %in% c(6,7,8) ~ "Summer", Month %in% c(9,10) ~ "Fall")) %>%
+  filter(DOY > 135 & DOY < 306) %>%
+  mutate(Suitable = case_when(Analyte == "watertemperature" & Value >22 ~ 0,
+                           Analyte == "watertemperature" & Value <= 22 ~ 1,
+                           Analyte == "turbidity" & Value >12 ~ 1,
+                           Analyte == "turbidity" & Value <= 12 ~ 0,
+                           Analyte == "salinity" & Value > 6 ~ 0,
+                           Analyte == "salinity" & Value <= 6 ~ 1)) 
+
+WQsumsuit = WQsumave%>%
+  group_by(Date, DOY, year, Month, Season, station, region, water_year_type, Analyte) %>%
+  summarize(PercentSuitable = sum(Suitable)/n())
+
+SuitableAll = WQsumave %>%
+  group_by(date_time_pst, Date, DOY, year, Month,Season, station, region, water_year_type) %>%
+  summarize(GoodSmeltHabitat = sum(Suitable)) %>%
+  mutate(GoodSmeltHabitat = case_when(GoodSmeltHabitat ==3 ~ 1,
+                                      TRUE ~ 0))
+
+Suitallannual = SuitableAll %>%
+  group_by(Date, DOY, year, Month, Season, station, region, water_year_type) %>%
+  summarize(PercentSuitable = sum(GoodSmeltHabitat)/n()) %>%
+  group_by(year, station, region, Season, water_year_type) %>%
+  summarize(Suitable = sum(PercentSuitable, na.rm =T))%>%
+  group_by(year, region, Season, water_year_type) %>%
+  summarize(Suitable = mean(Suitable, na.rm =T)) %>%
+  mutate(Analyte = "GoodSmeltHabitat")
+
+
+WQsumannual = WQsumsuit %>%
+  group_by(year, Analyte, station, Season, region, water_year_type) %>%
+  summarize(Suitable = sum(PercentSuitable, na.rm =T))%>%
+  group_by(year, Analyte, region, Season, water_year_type) %>%
+  summarize(Suitable = mean(Suitable, na.rm =T)) %>%
+  bind_rows(Suitallannual) %>%
+  filter(!is.na(Season))
+
+
+ggplot(WQsumannual, aes(x = year, y = Suitable, fill = region))+
+  geom_col(position = "dodge")+
+  facet_grid(Season~Analyte)
+
+
+
+#water year index
+yrs = read_csv("data/wtryrtype.csv") %>%
+  rename(year = WY)
+
+WQsuman = left_join(WQsumannual, yrs)
+
+ggplot(WQsuman, aes(x = Index, y = Suitable))+
+  geom_point()+ geom_smooth(method = "lm")+
+  facet_wrap(Analyte~region, scales = "free_y")+
+  ylab("Days of Suitable Habitat")+
+  xlab("Water Year Index")
+
+#Average X2
+load("data/Dayflow_allw2023.RData")
+X2 = Dayflow %>%
+  mutate(year = year(Date), DOY = yday(Date), Month = month(Date),
+         Season = case_when(Month %in% c(6,7,8) ~ "Summer", Month %in% c(9,10) ~ "Fall")) %>%
+  filter(year %in% c(2017:2024), Month %in% c(6:10)) %>%
+  group_by(year, Season) %>%
+  summarize(X2 = mean(X2, na.rm =T))
+
+
+WQsuman2 = left_join(WQsuman, X2, by = c("year", "Season")) %>%
+  mutate(PercentTime = case_when(Season == "Summer" ~ Suitable/92,
+                                 Season == "Fall" ~ Suitable/61))
+
+
+ggplot(WQsuman2, aes(x = X2, y = PercentTime, color = Season))+
+  geom_point()+ geom_smooth(method = "lm")+
+  facet_grid(Analyte~region, scales = "free_y")+
+  ylab("Percent time habitat is suitable")+
+  xlab("average seasonal X2")
+
+#Let's break it out by summer vsersus fall
+
