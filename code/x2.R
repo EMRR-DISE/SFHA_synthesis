@@ -119,6 +119,7 @@ X2s = test %>%
 ###outflow################
 
 #color code good years
+yrs = read_csv("data/wtryrtype.csv") 
 yearsYes = c(2005, 2006, 2011, 2017, 2019, 2023)
 yearsYes15 = c(2006, 2011, 2017, 2019, 2023)
   
@@ -128,8 +129,8 @@ Dayflowrecent = filter(Dayflow, year(Date) >2000, OUT>0)  %>%
                                             TRUE ~ FALSE),
          Good15 = case_when(Year %in% yearsYes15 ~ TRUE,
                             TRUE ~ FALSE)) %>%
-  left_join(yrs) %>%
-  mutate(YrType = factor(YrType, levels = c("C", "D", "BN", "AN", "W")))
+  left_join(yrs, by =c("Year" = "WY")) %>%
+  mutate(YrType = factor(`Yr-type`, levels = c("C", "D", "BN", "AN", "W")))
 
 ggplot(Dayflowrecent, aes(x = DOY, y = OUT, group = as.factor(Year), color = YrType, linetype =  Good))+ 
   geom_line(size = 1)+

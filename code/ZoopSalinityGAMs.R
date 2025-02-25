@@ -84,6 +84,9 @@ pseudo_data_mass<-zoop_data%>%
          BPUE_log1p=log(BPUE+1)) # log1p transform BPUE for model
 
 
+ggplot(pseudo_data_mass, aes(x = doy, y = BPUE_log1p)) + geom_smooth()+
+  scale_x_continuous(breaks = c(153, 183, 214), labels = c("Jun", "Jul", "Aug"))
+
 ####### Prediction model ###############################
 
 #Set up prediction data for model

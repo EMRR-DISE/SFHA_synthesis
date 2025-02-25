@@ -10,15 +10,15 @@ library(sf)
 
 load("Data/Dayflow_allw2023.RData")
 yrs = read_csv("data/wtryrtype.csv")
-DF = filter(Dayflow, Year > 2010)
+DF = filter(Dayflow, Year > 2010) %>%
+  mutate(Mo = month(Date),WaterYear = case_when(Mo %in% c(10,11,12) ~Year+1, TRUE ~Year),
+          Year2 = case_when(Mo %in% c(12) ~Year+1,TRUE ~Year))
 
-#while the water year ends Sep 30, we want october to be with the previous water year
+#while the water year ends Sep 30, we want october and november to be with the previous water year
 
-DF = mutate(DF, Mo = month(Date), Year2 = case_when(Mo ==10 ~Year-1,
-                                                    TRUE ~Year),
-            Season = case_when(Mo %in% c(3,4,5) ~ "Spring",
+DF = mutate(DF, Season = case_when(Mo %in% c(3,4,5) ~ "Spring",
                                Mo %in% c(6,7,8) ~ "Summer",
-                               Mo %in% c(9,10) ~ "Fall",
+                               Mo %in% c(9,10,11) ~ "Fall",
                                TRUE ~ "Winter"))
 DFsum = group_by(DF, Season, Year2) %>%
   summarize(OUT = mean(OUT), X2 = mean(X2), CVP = mean(CVP), SWP = mean(SWP))
