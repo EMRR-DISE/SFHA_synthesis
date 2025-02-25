@@ -53,9 +53,9 @@ foo3 = foo3%>%
   mutate(Mo = month(Date), Year = year(Date),             
          Season = case_when(Mo %in% c(3,4,5) ~ "Spring",
                             Mo %in% c(6,7,8) ~ "Summer",                              
-                            Mo %in% c(9,10) ~ "Fall",                               
+                            Mo %in% c(9,10, 11) ~ "Fall",                               
                             TRUE ~ "Winter"),
-         Year2 = case_when(Mo %in% c(11,12) ~Year+1,
+         Year2 = case_when(Mo %in% c(12) ~Year+1,
                            TRUE ~Year)) %>%
   filter(Year2 >=2018)
 
@@ -68,9 +68,9 @@ hops = filter(histops, ACTION == "Tidal Operations") %>%
   mutate(Mo = month(Date), Year = year(Date),             
          Season = case_when(Mo %in% c(3,4,5) ~ "Spring",
                             Mo %in% c(6,7,8) ~ "Summer",                              
-                            Mo %in% c(9,10) ~ "Fall",                               
+                            Mo %in% c(9,10, 11) ~ "Fall",                               
                             TRUE ~ "Winter"),
-         Year2 = case_when(Mo %in% c(11,12) ~Year+1,
+         Year2 = case_when(Mo %in% c(12) ~Year+1,
                            TRUE ~Year))
 
 alldays = data.frame(Date = seq(from = ymd("2010-01-01"), to = ymd("2024-11-01"), by = "day"))
@@ -87,9 +87,9 @@ foo2 = foo2%>%
   mutate(Mo = month(Date), Year = year(Date),             
          Season = case_when(Mo %in% c(3,4,5) ~ "Spring",
                             Mo %in% c(6,7,8) ~ "Summer",                              
-                            Mo %in% c(9,10) ~ "Fall",                               
+                            Mo %in% c(9,10,11) ~ "Fall",                               
                             TRUE ~ "Winter"),
-         Year2 = case_when(Mo %in% c(11,12) ~Year+1,
+         Year2 = case_when(Mo %in% c(12) ~Year+1,
                            TRUE ~Year)) %>%
   filter(Year2 <2018, Year2 >2009)
 
@@ -99,9 +99,9 @@ allops = left_join(alldays,
   mutate(Mo = month(Date), Year = year(Date),             
          Season = case_when(Mo %in% c(3,4,5) ~ "Spring",
                             Mo %in% c(6,7,8) ~ "Summer",                              
-                            Mo %in% c(9,10) ~ "Fall",                               
+                            Mo %in% c(9,10, 11) ~ "Fall",                               
                             TRUE ~ "Winter"),
-         Year2 = case_when(Mo %in% c(11,12) ~Year+1,
+         Year2 = case_when(Mo %in% c(12) ~Year+1,
                            TRUE ~Year))
 
 
@@ -121,7 +121,7 @@ BDL2 = mutate(BDL, Salinity = ec2pss(Value/1000, 25), Year = year(ObsDate), Mo =
                                 TRUE ~ Year),
               Season  = case_when(Mo %in% c(3,4,5) ~ "Spring",
                                   Mo %in% c(6,7,8) ~ "Summer",                              
-                                  Mo %in% c(9,10) ~ "Fall",                               
+                                  Mo %in% c(9,10, 11) ~ "Fall",                               
                                   TRUE ~ "Winter")) %>%
   group_by(Year2, Season) %>%
   summarize(BDL = mean(Salinity, na.rm =T))
@@ -196,11 +196,11 @@ smeltCPUE = filter(smelt, !is.na(Tow_volume)) %>%
   summarize(Count = sum(Count, na.rm =T), CPUE = sum(CPUE)) %>%
   group_by(Source, Region, Year, Month) %>%
   summarize(CPUE = mean(CPUE, na.rm =T), Count = sum(Count)) %>%
-  mutate(Season = case_when(Month %in% c(1,2,3,4,5) ~ "Spring",
-                            Month %in% c(2,3,4,5) ~ "Spring",
+  mutate(Season = case_when(
+                            Month %in% c(3,4,5) ~ "Spring",
                             Month %in% c(6,7,8)~ "Summer",
-                            Month %in% c(11,12,1)~ "Winter",
-                            Month %in% c(9,10) ~ "Fall"))
+                            Month %in% c(12,1, 2)~ "Winter",
+                            Month %in% c(9,10, 11) ~ "Fall"))
 
 ggplot(filter(smeltCPUE, !is.na(Region)), aes(x = Year, y = CPUE, fill = Source))+
   facet_grid(Region~Season)+
@@ -277,11 +277,11 @@ pseudos = Zoopsynther(Data_type = "Community", Years = c(2010:2023),
 load("data/SMSCGRegions.RData")
 pseudosum = pseudos %>%
   mutate(Mo = month(Date), 
-         Year2 = case_when(Mo %in% c(11,12) ~ Year+1,
+         Year2 = case_when(Mo %in% c(12) ~ Year+1,
                            TRUE ~ Year),
          Season  = case_when(Mo %in% c(3,4,5) ~ "Spring",
                              Mo %in% c(6,7,8) ~ "Summer",                              
-                             Mo %in% c(9,10) ~ "Fall",                               
+                             Mo %in% c(9,10, 11) ~ "Fall",                               
                              TRUE ~ "Winter")) %>%
   filter(!is.na(Latitude)) %>%
   st_as_sf(coords = c("Longitude", "Latitude"), crs = 4326) %>%
@@ -352,11 +352,11 @@ zoopsamps = Zoopsynther(Data_type = "Community", Years = c(2010:2023),
 
 zoopsampsX = zoopsamps %>%
   mutate(Mo = month(Date), 
-         Year2 = case_when(Mo %in% c(11,12) ~ Year+1,
+         Year2 = case_when(Mo %in% c(12) ~ Year+1,
                            TRUE ~ Year),
          Season  = case_when(Mo %in% c(3,4,5) ~ "Spring",
                              Mo %in% c(6,7,8) ~ "Summer",                              
-                             Mo %in% c(9,10) ~ "Fall",                               
+                             Mo %in% c(9,10, 11) ~ "Fall",                               
                              TRUE ~ "Winter")) %>%
   filter(!is.na(Latitude)) %>%
   st_as_sf(coords = c("Longitude", "Latitude"), crs = 4326) %>%
