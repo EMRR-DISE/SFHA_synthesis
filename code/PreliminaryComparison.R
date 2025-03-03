@@ -375,3 +375,9 @@ zoopsampssum = group_by(zoopsampsXY, Region, Mo, Season, SizeClass, Year)  %>%
 ggplot(zoopsampssum, aes(x = Year, y = N, fill = SizeClass)) + geom_col(position = "dodge")+
   facet_wrap(~Region)+
   ylab("Number of Samples (June-October)")
+
+library(deltamapr)
+ggplot()+
+  geom_sf(data = WW_Delta)+
+  geom_sf(data = Regions, aes(fill = Region), alpha = 0.5)+
+  coord_sf(xlim =c(-122.2, -121.6), ylim = c(38, 38.3))
