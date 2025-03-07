@@ -2,7 +2,7 @@
 
 #Start with just Pseudodiaptomus
 
-#Fit a model with 1972-2010, then see how actual values from 2011-2024 work.
+#Fit a model with 1995-2010, then see how actual values from 2011-2024 work.
 
 #How do action years and non-action years compare in terms of relationship to the model?
 
