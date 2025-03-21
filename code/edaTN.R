@@ -54,13 +54,14 @@ data$skt <- bridgeAccess("https://filelib.wildlife.ca.gov/Public/Delta%20Smelt/S
 
 
 # --- Summer Townet ---
-stnFilePath <- file.path(tempdir(), "STN_Data1959-2023.accdb")
-download.file("https://filelib.wildlife.ca.gov/Public/TownetFallMidwaterTrawl/TNS%20MS%20Access%20Data/TNS%20data/STN_Data1959-2023.accdb", 
+stnFilePath <- file.path(tempdir(), "STN_Data1959-2024.accdb")
+download.file("https://filelib.wildlife.ca.gov/Public/TownetFallMidwaterTrawl/TNS%20MS%20Access%20Data/TNS%20data/STN_Data1959-2024.accdb", 
               destfile = stnFilePath, 
               mode = "wb")
 
 data$stn <- bridgeAccess(stnFilePath,
-                         c("Length", "Sample", "TowEffort", "Catch", "MSysRelationships")) %>% 
+                         c("Length", "Sample", "TowEffort", "Catch",
+                           "MSysRelationships")) %>% 
   {
     schema <- .$MSysRelationships
     schemaJoin(schema, .)
@@ -211,7 +212,7 @@ data$dayflow <- read.csv("https://data.cnra.ca.gov/dataset/06ee2016-b138-47d7-9e
 #             row.names = F)
 
 # Final data columns
-# This is to be ran AFTER the manual steps in lines 18-146
+# This is to be ran AFTER the manual steps above that are commented out
 data$metadataFinal <- read.csv("needMetadata.csv")
 potential <- list()
 potential$response <- data$metadataFinal %>% 
@@ -226,8 +227,7 @@ potential$predictor <- data$metadataFinal %>%
   ) %>% 
   pull(variable)
 
-# --- Data distribution ---
-
+# Exploring response ------------------------------------------------------
 # Response variables first
 data$health %>% 
   transmute(across(all_of(potential$response), ~ as.numeric(.x))) %>% 
@@ -405,7 +405,7 @@ ggplot(data$health %>%
 # Appears to be caused by sex, but this effect is different from year to year
 # year and sex likely will have to be in the model, but our sex data isn't as robust...
 
-# Need to explore the sex data
+# Exploring NA distributions ----------------------------------------------
 data$health %>% 
   transmute(collection_date,
             across(contains("sex"), ~ ifelse(is.na(.x), T, F))) %>% 
@@ -456,6 +456,18 @@ data$health %>%
       scale_y_discrete(drop = FALSE, labels = labels)
   }
 
+# --- Filling in sex ---
+# Only get 7 extra entries in sex per plot above...From dissectSex
+data$health <- data$health %>% 
+  mutate(sex = coalesce(sex, dissect_sex, histo_sex))
+
+# # Confirm:
+# data$health %>% 
+#   mutate(sexFilled = coalesce(sex, dissect_sex, histo_sex)) %>% # Change sex to sexFilled above to check
+#   select(contains("sex")) %>% 
+#   is.na() %>% 
+#   colSums()
+
 # Ok...what's the NA distribution here
 data$naRange <- data$health %>% 
   # Convert collection_date to proper datetime if it's not already
@@ -497,19 +509,17 @@ data$naRange %>%
   ) +
   geom_point()
 
-# --- Exploring the predictors ---
+# What about when limited to just the summer and fall?
 
-# Exploring the predictors ------------------------------------------------
-
-# --- Updating data with trawling data ---
+# Updating trawl data -----------------------------------------------------
 dataJoined <- list()
 
-# --- EDSM ---
+# Updating EDSM -----------------------------------------------------------
 joinedEdsm <- data$health %>% 
   filter(agency == "usfws" | survey_char == "edsm") %>% 
   select(agency, survey_char, collection_date, depth_bottom, fish_id, 
          fork_length, cf, cf_no_gonad, hsi,
-         avg_temp, avg_turb) %>% 
+         avg_temp, avg_turb, sex) %>% 
   left_join(
     bind_rows(
       data$edsmEdi$EDSM_20mm.csv %>% 
@@ -579,7 +589,7 @@ dataJoined$edsm <- joinedEdsm %>%
   transmute(
     agency, survey_char, 
     collection_date = SampleDate,
-    fish_id, fork_length,
+    fish_id, fork_length, sex,
     cf, cf_no_gonad, hsi, 
     station = StationCode, 
     MethodCode, Latitude, Longitude, Tide,
@@ -589,7 +599,7 @@ dataJoined$edsm <- joinedEdsm %>%
     DepthBottom = BottomDepth
   )
 
-# --- SKT ---
+# Updating SKT ------------------------------------------------------------
 # Seems as though there are some mix up with the fish id tags. Most of the ids
 # match up to the SKT's FishID1 and FishID2, but some values are also from
 # the diet study (investigated with Vanessa Mora)
@@ -605,7 +615,7 @@ joinedSkt <- data$health %>%
             fork_length, cf, cf_no_gonad, hsi,
             station,
             dfw_tidecode, dfw_temp, dfw_spcond, 
-            dfw_sal, dfw_turb) %>% 
+            dfw_sal, dfw_turb, sex) %>% 
   separate_wider_delim(cols = "fish_id", delim = "skt", names = c("fish_id1", "fish_id2"),
                        too_few = "align_end", cols_remove = F) %>% 
   left_join(
@@ -728,7 +738,7 @@ dataJoined$skt <- dataJoined$skt %>%
   transmute(
     agency, survey_char, 
     collection_date = SampleDate,
-    fish_id, fork_length,
+    fish_id, fork_length, sex,
     cf, cf_no_gonad, hsi, 
     station, 
     MethodCode = "KDTR", 
@@ -746,7 +756,8 @@ dataJoined$skt <- dataJoined$skt %>%
     DepthBottom
   )
 
-# --- STN ---
+# Updating STN ------------------------------------------------------------
+
 data$health %>% 
   filter(agency == "cdfw", survey_char == "stn",
          collection_date == as.Date("2011-08-23"),
@@ -759,8 +770,8 @@ data$stn %>%
          OrganismCode == 3) %>% 
   View()
 
-# Having difficulties trying to find the fish ID equivalent. Will simply
-# bind by date and station
+# In speaking with Margaret Johnson (ES Lead of STN), SerialNumber from the
+# LengthSupplement table is the key to identify fish that were sent to UCD
 
 joinedStn <- data$health %>% 
   filter(agency == "cdfw", survey_char == "stn") %>% # 438 rows
@@ -769,7 +780,9 @@ joinedStn <- data$health %>%
             station,
             fork_length, cf, cf_no_gonad, hsi,
             dfw_tidecode, dfw_temp, dfw_spcond, 
-            dfw_sal, dfw_turb) %>% 
+            dfw_sal, dfw_turb, sex) %>% 
+  # separate_wider_delim(cols = "fish_id", delim = "stn", names = c("fish_id1", "fish_id2"),
+  #                      too_few = "align_end", cols_remove = F) %>% # Missing fishid's on the STN side. Skipping
   left_join(
     data$stn %>% 
       transmute(collection_date = SampleDate,
@@ -834,7 +847,7 @@ dataJoined$stn <- joinedStn %>%
   transmute(
     agency, survey_char, 
     collection_date = SampleDate,
-    fish_id, fork_length,
+    fish_id, fork_length, sex,
     cf, cf_no_gonad, hsi, 
     station, 
     MethodCode = "MWT", 
@@ -852,7 +865,7 @@ dataJoined$stn <- joinedStn %>%
     DepthBottom
   )
 
-# --- FMWT ---
+# Updating FMWT -----------------------------------------------------------
 # Same issue with FMWT as STN. Don't know how the fish_id's are recorded in the database
 # Going to just bind on date/station
 joinedFmwt <- data$health %>% 
@@ -860,7 +873,7 @@ joinedFmwt <- data$health %>%
   transmute(agency, survey_char, collection_date, depth_bottom, fish_id,
             year = year(collection_date),
             station,
-            fork_length, cf, cf_no_gonad, hsi,
+            fork_length, cf, cf_no_gonad, hsi, sex,
             dfw_tidecode, dfw_temp, dfw_spcond, 
             dfw_sal, dfw_turb) %>% 
   left_join(
@@ -926,7 +939,7 @@ dataJoined$fmwt <- joinedFmwt %>%
   transmute(
     agency, survey_char, 
     collection_date = SampleDate,
-    fish_id, fork_length,
+    fish_id, fork_length, sex,
     cf, cf_no_gonad, hsi, 
     station, 
     MethodCode = "MWT", 
@@ -961,7 +974,29 @@ data$final <- bind_rows(dataJoined) %>% # 2628 rows, same as original
   left_join(
     data$dayflow,
     by = c("collection_date" = "Date")
-  )
+  ) %>% 
+  mutate(month = month(collection_date, label = T, abbr = T),
+         season = factor(
+           case_when(as.numeric(month) %in% c(1, 2, 12) ~ "Winter", # Winter survival
+                     as.numeric(month) %in% c(3:5) ~ "Spring", # recruitment period
+                     as.numeric(month) %in% 6:8 ~ "Summer", # summer survival
+                     as.numeric(month) %in% 9:11 ~ "Fall"),
+           levels = c("Spring", "Summer", "Fall", "Winter")
+         ), # fall survival
+         # Seasons based on Polansky et al. 2024, Table 1
+         survey_char = factor(survey_char, levels = c("skt", "stn", "edsm", "fmwt")),
+         sex = factor(ifelse(sex == 0, "Female", "Male")),
+         # Secchi data differs between the surveys
+         Secchi = ifelse(survey_char %in% c("skt", "stn"),
+                         Secchi / 100,
+                         Secchi))
+# Seasons based on Polansky et al. 2024, Table 1
+
+# Pivoting for easier time analyzing across response variables
+data$finalPivoted <- data$final %>% 
+  pivot_longer(c(cf, cf_no_gonad, hsi),
+               names_to = "response",
+               values_to = "value")
 
 # Checking for data completeness
 missingEnvironmental <- data$final %>% 
@@ -993,12 +1028,593 @@ bind_rows(select(data$edsmEdi$EDSM_20mm.csv, -c(StageCode, TagCode)),
     )
   } %>% 
   View()
-# Don't really know why these don't have environmental data. Asked Claudia, awaiting answer
+# These rows do not have wq data due to being code 9, informed by Claudia
+
+
+# Begin EDA ---------------------------------------------------------------
 
 # I think this is a good stopping point for now. Will now EDA
 # Currently have:
 # cf, cf_no_gonad, hsi
-# station, MethodCode, Tide, WaterTemperature, Secchi, 
+# station, MethodCode, Tide, WaterTemperature, Secchi, SpecificConductance,
+# TurbidityNTU, DissolveOxygen, DepthBottom, SubRegion, SAC, SJR, OUT, and X2
+
+data$final %>% 
+  pivot_longer(c(cf, cf_no_gonad, hsi),
+               names_to = "response",
+               values_to = "value") %>% 
+  ggplot(aes(MethodCode, value, fill = survey_char)) +
+  geom_boxplot() +
+  facet_wrap(~response, scales = "free_y") +
+  labs(title = "hsi different for the SKT")
+# Not really a difference between methods, more just between surveys
+
+# response per year
+data$final %>% 
+  pivot_longer(c(cf, cf_no_gonad, hsi),
+               names_to = "response",
+               values_to = "value") %>% 
+  ggplot(aes(collection_date, value, color = survey_char)) +
+  geom_point() +
+  facet_wrap(~response, scales = "free_y")
+# hsi does decrease over time. Does it appear to be a function of seasonality?
+# response per month
+data$final %>% 
+  pivot_longer(c(cf, cf_no_gonad, hsi),
+               names_to = "response",
+               values_to = "value") %>% 
+  ggplot(aes(month, value, color = survey_char)) +
+  geom_jitter() +
+  facet_wrap(~response, scales = "free_y")
+# does appear to be seasonality driven, the hsi
+
+data$final %>% 
+  pivot_longer(c(cf, cf_no_gonad, hsi),
+               names_to = "response",
+               values_to = "value") %>% 
+  ggplot(aes(month, value, fill = survey_char)) +
+  geom_boxplot(position = position_dodge(preserve = "single")) +
+  facet_wrap(~response)
+# hsi appears to be highly influenced by fish maturation
+# CF appears to be slightly larger in the FMWT than edsm in the same period. 
+# A function of year or method?
+
+data$final %>% 
+  pivot_longer(c(cf, cf_no_gonad, hsi),
+               names_to = "response",
+               values_to = "value") %>% 
+  ggplot(aes(season, value, fill = survey_char)) +
+  geom_boxplot(position = position_dodge(preserve = "single")) +
+  facet_wrap(~response, scale = "free_y")
+# In terms of seasonality; summer somewhat higher but strange bump in FMWT for cf
+
+data$final %>% 
+  mutate(year = year(collection_date)) %>% 
+  pivot_longer(c(cf, cf_no_gonad, hsi),
+               names_to = "response",
+               values_to = "value") %>% 
+  ggplot(aes(factor(year), value, fill = MethodCode)) +
+  geom_boxplot() +
+  # geom_jitter(aes(color = survey_char), alpha = 0.25) +
+  facet_grid(vars(response),
+             vars(factor(survey_char, levels = c("fmwt", "stn", "skt", "edsm"))),
+             scales = "free_y")
+# Seems like fish were larger earlier in the dataset. Only see this in the FMWT though and not
+# STN, so likely a function of both seasonlity and year
+
+# As a function of sex
+data$final %>% 
+  mutate(year = year(collection_date)) %>% 
+  ggplot(aes(month, hsi, fill = sex)) +
+  geom_boxplot() +
+  facet_wrap(~year) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+# Problem is sex is not recorded for most of 2018 and 2019-2021 data
+# Can you approximate using gonad weight...?
+data$final %>% 
+  transmute(cf, cf_no_gonad, gonad = cf - cf_no_gonad, sex) %>% 
+  ggplot(aes(cf, cf_no_gonad, color = gonad)) +
+  geom_point() +
+  facet_wrap(~sex)
+# Can't really predict sex from difference between cf and cf_no_gonad
+
+data$final %>% 
+  transmute(cf, cf_no_gonad, gonad = cf - cf_no_gonad, sex,
+            collection_date) %>% 
+  ggplot(aes(collection_date, gonad, color = sex)) +
+  geom_point()
+
+data$final %>% 
+  transmute(cf, cf_no_gonad, gonad = cf - cf_no_gonad, sex,
+            year = year(collection_date),
+            noDifference = gonad == 0) %>%
+  group_by(year) %>%
+  mutate(sexCount = n()) %>%
+  group_by(year) %>% 
+  add_count(sex) %>% 
+  mutate(proportionSex = n / sexCount) %>% 
+  ungroup() %>% 
+  {
+    proportionNoDifference <- count(., year, noDifference)
+    proportionSex <- distinct(., year, sex, proportionSex) %>% 
+      filter(is.na(sex))
+    
+    ggplot(data = proportionNoDifference,
+           aes(year, n)) +
+      geom_col(aes(fill = noDifference), position = "fill") +
+      scale_y_continuous(labels = scales::percent) +
+      geom_point(data = proportionSex, aes(y = proportionSex, 
+                                           shape = "NA"), size = 3) +
+      labs(shape = "Sex Data")
+  }
+# A bit concerning that the difference between cf and cf_no_gonad is 0 for years
+# in which sex data isn't available. Were dissections done for these latest years?
+# Is cf_no_gonad actually no gonads or simply cf for these later years?
+
+data$final %>% 
+  transmute(cf, cf_no_gonad, gonad = cf - cf_no_gonad, sex,
+            month,
+            noDifference = gonad == 0) %>%
+  group_by(month) %>%
+  mutate(sexCount = n()) %>%
+  group_by(month) %>% 
+  add_count(sex) %>% 
+  mutate(proportionSex = n / sexCount) %>% 
+  ungroup() %>% 
+  {
+    proportionNoDifference <- count(., month, noDifference)
+    proportionSex <- distinct(., month, sex, proportionSex) %>% 
+      filter(is.na(sex))
+    
+    ggplot(data = proportionNoDifference,
+           aes(month, n)) +
+      geom_col(aes(fill = noDifference), position = "fill") +
+      scale_y_continuous(labels = scales::percent) +
+      geom_point(data = proportionSex, aes(y = proportionSex, 
+                                           shape = "NA"), size = 3) +
+      labs(shape = "Sex Data")
+  }
+# Turns out, most of the missing sex is due to seasonality; juv fish
+# are harder to sex as they have smaller gonads
+  
+data$final %>% 
+  transmute(cf, cf_no_gonad, gonad = cf - cf_no_gonad, sex,
+            month, survey_char,
+            noDifference = gonad == 0) %>%
+  group_by(month) %>%
+  mutate(sexCount = n()) %>%
+  group_by(month) %>% 
+  add_count(sex) %>% 
+  mutate(proportionSex = n / sexCount) %>% 
+  ungroup() %>% 
+  {
+    proportionNoDifference <- count(., month, survey_char, noDifference)
+    proportionSex <- distinct(., month, sex, survey_char, proportionSex) %>% 
+      filter(is.na(sex))
+    
+    ggplot(data = proportionNoDifference,
+           aes(month, n)) +
+      geom_col(aes(fill = noDifference), position = "fill") +
+      scale_y_continuous(labels = scales::percent) +
+      geom_point(data = proportionSex, aes(y = proportionSex, 
+                                           shape = "NA"), size = 3) +
+      labs(shape = "Sex Data") +
+      facet_wrap(~survey_char)
+  }
+# cf and cf_no_gonads might not be necessary if we're looking at Summer-fall fish (Rosie)
+# Perhaps true but I do see some differences. Just need to make sure that these differences
+# are truly differences or not...
+
+exploreVariable <- function(variable, transformation = NULL, ...) {
+  
+  variable <- enquo(variable)
+  varName <- as_label(variable)
+  
+  # Create axis label based on transformation
+  axisLabel <- if (!is.null(transformation)) {
+    paste0(deparse(substitute(transformation)), "(", varName, ")")
+  } else {
+    varName
+  }
+  
+  applyTransformation <- function(dataFrame) {
+    if (!is.null(transformation)) {
+      dataFrame %>% mutate(!!varName := transformation(!!variable))
+    } else {
+      dataFrame
+    }
+  }
+  
+  responseScatter <- data$finalPivoted %>%
+    applyTransformation() %>%
+    ggplot(aes(.data[[varName]], value)) +
+    geom_point(...) +
+    geom_smooth(method = "lm") +
+    facet_wrap(~response, scales = "free_y") +
+    labs(x = axisLabel)
+  
+  responseSurveyScatter <- data$finalPivoted %>%
+    applyTransformation() %>%
+    ggplot(aes(.data[[varName]], value, color = survey_char)) +
+    geom_point(...) +
+    geom_smooth(method = "lm") +
+    facet_grid(vars(survey_char), vars(response), scales = "free_y") +
+    labs(x = axisLabel)
+  
+  hsiSurveyScatter <- data$final %>%
+    applyTransformation() %>%
+    ggplot(aes(.data[[varName]], hsi, color = survey_char)) +
+    geom_point(...) +
+    facet_wrap(~survey_char, scales = "free_y") +
+    labs(x = axisLabel)
+  
+  hsiYearSurveyScatter <- data$final %>%
+    applyTransformation() %>%
+    mutate(year = year(collection_date)) %>%
+    ggplot(aes(.data[[varName]], hsi, color = survey_char)) +
+    geom_point(...) +
+    facet_wrap(~year) +
+    labs(x = axisLabel)
+  
+  hsiHeatSeasonality <- data$final %>%
+    applyTransformation() %>%
+    ggplot(aes(x = month, y = round(hsi, 1), fill = .data[[varName]])) +
+    geom_tile() +
+    scale_fill_viridis_c(option = "A") +
+    labs(fill = axisLabel)
+  
+  hsiHeatSeasonalitySurvey <- data$final %>%
+    applyTransformation() %>%
+    ggplot(aes(x = month, y = round(hsi, 1), fill = .data[[varName]])) +
+    geom_tile() +
+    scale_fill_viridis_c(option = "A") +
+    facet_wrap(~survey_char) +
+    labs(fill = axisLabel)
+  
+  hsiHeatSeasonalitySktVsAll <- data$final %>%
+    applyTransformation() %>%
+    mutate(survey = ifelse(survey_char == "skt", "skt", "stn-edsm-fmwt")) %>%
+    ggplot(aes(x = month, y = round(hsi, 1), fill = .data[[varName]])) +
+    geom_tile() +
+    scale_fill_viridis_c(option = "A") +
+    facet_wrap(~survey, scales = "free_y") +
+    labs(fill = axisLabel)
+  
+  cfSurveyScatter <- data$final %>%
+    applyTransformation() %>%
+    ggplot(aes(.data[[varName]], cf, color = survey_char)) +
+    geom_point(...) +
+    facet_wrap(~survey_char, scales = "free_y") +
+    labs(x = axisLabel)
+  
+  cfYearSurveyScatter <- data$final %>%
+    applyTransformation() %>%
+    mutate(year = year(collection_date)) %>%
+    ggplot(aes(.data[[varName]], cf, color = survey_char)) +
+    geom_point(...) +
+    facet_wrap(~year) +
+    labs(x = axisLabel)
+  
+  cfHeatSeasonality <- data$final %>%
+    applyTransformation() %>%
+    ggplot(aes(x = month, y = round(cf, 2), fill = .data[[varName]])) +
+    geom_tile() +
+    scale_fill_viridis_c(option = "A") +
+    labs(fill = axisLabel)
+  
+  cfHeatSeasonalitySurvey <- data$final %>%
+    applyTransformation() %>%
+    ggplot(aes(x = month, y = round(cf, 2), fill = .data[[varName]])) +
+    geom_tile() +
+    scale_fill_viridis_c(option = "A") +
+    facet_wrap(~survey_char) +
+    labs(fill = axisLabel)
+  
+  cfHeatSeasonalitySktVsAll <- data$final %>%
+    applyTransformation() %>%
+    mutate(survey = ifelse(survey_char == "skt", "skt", "stn-edsm-fmwt")) %>%
+    ggplot(aes(x = month, y = round(cf, 2), fill = .data[[varName]])) +
+    geom_tile() +
+    scale_fill_viridis_c(option = "A") +
+    facet_wrap(~survey, scales = "free_y") +
+    labs(fill = axisLabel)
+  
+  cfVsCfNoGonad <- data$finalPivoted %>% 
+    filter(response != "hsi") %>% 
+    applyTransformation() %>% 
+    ggplot(aes(x = month, y = round(value, 2), fill = .data[[varName]])) +
+    geom_tile() +
+    facet_wrap(~response) +
+    scale_fill_viridis_c(option = "A") +
+    labs(fill = axisLabel)
+  
+  list(
+    responseScatter,
+    responseSurveyScatter,
+    hsiSurveyScatter,
+    hsiYearSurveyScatter,
+    hsiHeatSeasonality,
+    hsiHeatSeasonalitySurvey,
+    hsiHeatSeasonalitySktVsAll,
+    cfSurveyScatter,
+    cfYearSurveyScatter,
+    cfHeatSeasonality,
+    cfHeatSeasonalitySurvey,
+    cfHeatSeasonalitySktVsAll,
+    cfVsCfNoGonad
+  ) %>% setNames(c(
+    "responseScatter",
+    "responseSurveyScatter",
+    "hsiSurveyScatter",
+    "hsiYearSurveyScatter",
+    "hsiHeatSeasonality",
+    "hsiHeatSeasonalitySurvey",
+    "hsiHeatSeasonalitySktVsAll",
+    "cfSurveyScatter",
+    "cfYearSurveyScatter",
+    "cfHeatSeasonality",
+    "cfHeatSeasonalitySurvey",
+    "cfHeatSeasonalitySktVsAll",
+    "cfVsCfNoGonad"
+  ))
+}
+
+walkThroughPlots <- function(list) {
+  for (i in list) {
+    print(i)
+    readline("next")
+  }
+}
+
+eda <- list()
+
+# --- Water temperature ---
+eda$waterTemperature <- exploreVariable(WaterTemperature, alpha = 0.35)
+walkThroughPlots(eda$waterTemperature)
+
+# Maybe a diference between hsi past a certain temp threshold? Need to check against seasonaility
+# Doesn't seem like temperature affects HSI much; theoretically, only way is if it dictates survival
+
+# Perhaps cf is negatively correlated?
+# Really weak negatively correlated; likely a combination of temp + seasonality needed
+# cf_no_gonad probably similar, esp in the summer/fall time
+# the cf_no_gonad has a shallower slope, likely because it removes confounding effect
+# of maturation
+
+# --- Secchi ---
+eda$secchi <- exploreVariable(Secchi, alpha = 0.35)
+walkThroughPlots(eda$secchi)
+
+# Slight negative relationship with hsi. likely due to fish spawning in the winter
+  # when turbidity is generally higher
+# When looking at per survey, skt and fmwt have negative, 
+  # while stn and edsm has no real relationship, so def seasonlity
+# The STN has some really low secchi values and yet it's hsi is just as low as edsm/fmwt
+# See no real relationship with cf
+
+# --- Tide ---
+eda$tide <- data$finalPivoted %>% 
+  filter(!is.na(Tide)) %>% 
+  ggplot(aes(Tide, value, fill = survey_char)) +
+  geom_boxplot(position = position_dodge(preserve = "single")) +
+  facet_wrap(~response, scales = "free_y")
+# Don't see much
+
+# --- Specific conductance ---
+eda$specificConductance <- exploreVariable(SpecificConductance, alpha = 0.35)
+walkThroughPlots(eda$specificConductance)
+# Can likely benefit from turning specific conductance to salinity...
+# Or can try log transforming it
+
+eda$specificConductanceLog <- exploreVariable(SpecificConductance, transformation = log,
+                                           alpha = 0.35)
+walkThroughPlots(eda$specificConductanceLog)
+# Likely a better predictor here
+# Some increased correlation to cf (+) and hsi (-)
+# Driven mostly by catches of adults in fresher water as they are spawning
+
+# Slightly negative relationship for hsi; nothing really for cf
+  # Only really see this for the SKT and STN
+
+# --- Turbidity ---
+eda$TurbidityNTU <- exploreVariable(TurbidityNTU, alpha = 0.35)
+walkThroughPlots(eda$TurbidityNTU)
+# Likely need to transform this variable; some really high values
+
+
+# only a few large values of turbidity. Can try to transform it
+eda$TurbidityNTULog <- exploreVariable(TurbidityNTU, transformation = log, alpha = 0.35)
+walkThroughPlots(eda$TurbidityNTULog)
+# No real trends, negative for stn but slightly positive for others
+  # Looking at this, it seems like very few catch of individuals above log(4.5) for STN
+  # These individuals seemed to have come from 2017, which turbidity was really high
+
+# --- DissolvedOxygen ---
+eda$DissolvedOxygen <- exploreVariable(DissolvedOxygen, alpha = 0.35)
+walkThroughPlots(eda$DissolvedOxygen)
+# Negative correlation to cf?
+# Only EDSM takes DO
+
+# --- DepthBottom ---
+eda$DepthBottom <- exploreVariable(DepthBottom, alpha = 0.35)
+walkThroughPlots(eda$DepthBottom)
+# Perhaps some positive correlation, deeper = higher
+  # Might only be a midwater phenomenon
+# Really strange distribution for EDSM...Most DS (except 1) is collected
+  # from the KDTR.
+# Across the distribution, too many shallow values in edsm. If you take out 
+  # this, there likely is no longer a positive correlation. Survey dependent
+# The STN has some really low values too; perhaps the older fish are deeper down?
+
+# --- SubRegion ---
+# Coarse attempt to order the subregions
+distanceFromGoldenGate <- deltamapr::R_EDSM_Subregions_Mahardja_FLOAT %>% 
+  st_transform(crs = 3310) %>% 
+  {
+    subregions <- .
+    # Golden gate approximated point
+    goldenGateBridge <- st_sfc(st_point(c(-122.47859198934283, 37.82006342466039)), 
+                               crs = 4326) %>% 
+      st_transform(crs = 3310)
+    
+    subregions %>% 
+      mutate(minDistToGGB = st_distance(geometry, goldenGateBridge),
+             minDistToGGB_km = as.numeric(minDistToGGB) / 1000)
+  }
+
+eda$subregion$hsi <- data$final %>% 
+  left_join(distanceFromGoldenGate, by = "SubRegion") %>% 
+  ggplot(aes(reorder(SubRegion, minDistToGGB_km), hsi, fill = survey_char)) +
+  geom_boxplot() +
+  facet_wrap(~survey_char, scales = "free_x") +
+  coord_flip()
+
+eda$subregion$cf <- data$final %>% 
+  left_join(distanceFromGoldenGate, by = "SubRegion") %>% 
+  ggplot(aes(reorder(SubRegion, minDistToGGB_km), cf, fill = survey_char)) +
+  geom_boxplot() +
+  facet_wrap(~survey_char, scales = "free_x") +
+  coord_flip()
+
+eda$subregion$cf_no_gonad <- data$final %>% 
+  left_join(distanceFromGoldenGate, by = "SubRegion") %>% 
+  ggplot(aes(reorder(SubRegion, minDistToGGB_km), cf_no_gonad, fill = survey_char)) +
+  geom_boxplot() +
+  facet_wrap(~survey_char, scales = "free_x") +
+  coord_flip()
+
+# Difficult to tell
+
+# --- Sac ---
+eda$SAC <- exploreVariable(SAC, alpha = 0.35)
+walkThroughPlots(eda$SAC)
+# Seems like positive correlation to hsi; however, might be year based
+# Driven mainly by skt catches in 2017
+# nothing really for cf
+
+eda$SACLog <- exploreVariable(SAC, alpha = 0.35, transformation = log)
+walkThroughPlots(eda$SACLog)
+# positive in EDSM (for hsi) but negative in stn
+
+# --- SJR ---
+eda$SJR <- exploreVariable(SJR, alpha = 0.35)
+walkThroughPlots(eda$SJR)
+# Similiar relationship as SAC in which edsm shows positive and stn (and perhaps fmwt) show negative
+
+eda$SJRLog <- exploreVariable(SJR, alpha = 0.35, transformation = log)
+walkThroughPlots(eda$SJRLog)
+# log relationship actually shows a negative to hsi here; likely supports no relationship
+
+# --- OUT ---
+eda$OUT <- exploreVariable(OUT, alpha = 0.35)
+walkThroughPlots(eda$OUT)
+# positive correlation to hsi; likely driven by a singular year
+# Driven by skt, higher hsi values of larger individuals in 2017, although those hsi aren't particularly more
+# than other years in skt
+# Likely due to so many "low" hsi values from the other surveys vs only having higher hsi
+# for high outflow only from the skt
+
+eda$OUTLog <- exploreVariable(OUT, alpha = 0.35, transformation = log)
+walkThroughPlots(eda$OUTLog)
+# Can't really see anything for cf
+
+# --- X2 ---
+eda$X2 <- exploreVariable(X2, alpha = 0.35)
+walkThroughPlots(eda$X2)
+# Like outflow, higher hsi in higher flow years by the skt causing the relationship to be negatively correlated
+
+# --- Month ---
+eda$month$hsi <- data$final %>% 
+  ggplot(aes(month, hsi)) +
+  geom_boxplot() +
+  facet_wrap(~survey_char, scales = "free_y")
+# Heavily influenced by seasonlity, esp in skt
+
+eda$month$cf <- data$final %>% 
+  ggplot(aes(month, cf)) +
+  geom_boxplot() +
+  facet_wrap(~survey_char, scales = "free_y")
+# Weird CF values in Nov...How many years was this?
+
+eda$month$cf_no_gonad <- data$final %>% 
+  ggplot(aes(month, cf_no_gonad)) +
+  geom_boxplot() +
+  facet_wrap(~survey_char, scales = "free_y")
+
+eda$timeSampled <- data$final %>% 
+  distinct(month, year = year(collection_date)) %>% 
+  count(month, name = "numberYearsSampled") %>% 
+  left_join(data$final %>% 
+              count(month, name = "numberDeltaSmeltCaught"),
+            by = "month") %>% 
+  ggplot(aes(month, numberYearsSampled)) +
+  geom_col() +
+  geom_text(aes(label = paste0("ds = ", numberDeltaSmeltCaught)), 
+            vjust = -1, size = 5, color = "firebrick")
+
+# --- season ---
+eda$season$hsi <- data$final %>% 
+  ggplot(aes(season, hsi)) +
+  geom_boxplot() +
+  facet_wrap(~survey_char, scales = "free_y")
+
+eda$season$cf <- data$final %>% 
+  ggplot(aes(season, cf)) +
+  geom_boxplot() +
+  facet_wrap(~survey_char, scales = "free_y")
+
+eda$season$cf_no_gonad <- data$final %>% 
+  ggplot(aes(season, cf_no_gonad)) +
+  geom_boxplot() +
+  facet_wrap(~survey_char, scales = "free_y")
+# Metrics higher in the summer vs fall in edsm
+
+# Summary EDA Pass 1 ------------------------------------------------------
+# Analysis of metrics at the time of measuring is not useful. Also not useful for our analysis
+# in which we want to compare conditions in a season to another. However, I wanted to see anyways
+
+# EDA Aggregations and Lags -----------------------------------------------
+
+# Fundamental concept: anything beyond optimal conditions means energy taken away from 
+  # growth or recruitment
+
+# Will try 3, 7, 14, 21, and monthly aggregations
+# Will also try seasonal and yearly aggregations
+  # For these longer ones, spring conditions might affect: 
+    # health of adults and thus egg quality
+    # early survival/growth of juveniles hatching
+    # any residual effects of spring conditions to food item growth into the summer
+    # spring conditions may allow individuals to occupy more favorable habitat that then
+      # gets cut off during the summer, e.g., Suisun Marsh
+
+# --- Calculate wq data per subregion ---
+data$cdecMetadata <- deltadata:::cdecStations %>% 
+  st_as_sf(coords = c("longitude", "latitude"),
+           crs = 4326) %>% 
+  st_transform(crs = 3310) %>% 
+  st_join(deltamapr::R_EDSM_Subregions_Mahardja_FLOAT %>% 
+            st_transform(crs = 3310), join = st_intersects) %>% 
+  # Bounding to just the delta
+  filter(st_intersects(geometry, st_as_sfc(st_bbox(distanceFromGoldenGate)), 
+                       sparse = FALSE)[,1])
+
+distanceFromGoldenGate %>% 
+  ggplot() +
+  geom_sf() +
+  geom_sf(data = data$cdecMetadata %>% 
+            filter(!is.na(SubRegion)),
+          aes(color = SubRegion),
+          size = 2) +
+  geom_sf(data = data$cdecMetadata %>% 
+            filter(is.na(SubRegion)),
+          aes(color = SubRegion),
+          size = 1, alpha = 0.25)
+
+# Don't really have alot of data in the more ds regions. Might have to incorporate
+# NOAA gauges.
+
+# Misc --------------------------------------------------------------------
 
 # Dayflow variables: x2, outflow
 # Spatial variables: region1, distance to tidal marsh/nontidal wetlands
