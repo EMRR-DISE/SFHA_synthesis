@@ -7,6 +7,8 @@ library(car)
 library(deltadata)
 library(patchwork)
 library(sf)
+library(ggforce)
+library(forecast)
 
 data <- list()
 
@@ -996,6 +998,8 @@ data$final <- bind_rows(dataJoined) %>% # 2628 rows, same as original
                          Secchi))
 # Seasons based on Polansky et al. 2024, Table 1
 
+# fish_id = 1380, survey_char = stn; fish has a tumor, hsi @ 3.7
+
 # Pivoting for easier time analyzing across response variables
 data$finalPivoted <- data$final %>% 
   pivot_longer(c(cf, cf_no_gonad, hsi),
@@ -1705,75 +1709,455 @@ data$cdecDaily <- lapply(data$cdec, function(data) {
 
 # --- Removing outliers ---
 # Using MAD to find potentially outlying points, min of range is always 0
-data$cdecFiltered <- lapply(data$cdec, function(metric, 
-                                   minValue = 0) {
-
-  dataFiltered <- lapply(metric, function(data) {
-    
-    if (is.null(data)) return(NULL)
-    
-    medianTemp <- median(data$value, na.rm = TRUE)
-    madTemp <- mad(data$value, na.rm = TRUE)
-    rangeLow <- max(minValue, medianTemp - 3 * madTemp)
-    rangeHigh <- medianTemp + 3 * madTemp
-    
-    data %>% 
-      filter(value > rangeLow,
-             value < rangeHigh) %>% 
-      mutate(rangeLow = rangeLow,
-             rangeHigh = rangeHigh)
-  })
+calculateMad <- function(variable, data = dataDiff, k) {
   
-  # Find consecutive values
-  dataFiltered %>% 
+  # if (!is.null(transformation)) {
+  #   data[[variable]] <- transformation(data[[variable]])
+  # }
+  
+  # Mad
+  medianValue <- median(data[[variable]], na.rm = TRUE)
+  madValue <- mad(data[[variable]], na.rm = TRUE)
+  
+  # If mad doesn't work, just use the 99 quantile range
+  if (madValue == 0) {
+    madValue <- mad(data[[variable]][which(data[[variable]] != 0)], na.rm = TRUE)
+    # rangeLow <- quantile(data[[variable]], 0.005, na.rm = T)
+    # rangeHigh <- quantile(data[[variable]], 0.995, na.rm = T)
+  }
+  
+  rangeLow <- medianValue - k * madValue
+  rangeHigh <- medianValue + k * madValue
+  
+  list(
+    medianValue = medianValue,
+    madValue = madValue,
+    rangeLow = rangeLow,
+    rangeHigh = rangeHigh
+  )
+}
+
+# For removing outliers based on the trends
+# This is in addition to outliers removed using MAD
+# Make sure to specify k
+outlierDetrend <- function(data, variable, metric = NULL, ...) { 
+
+  variable <- ensym(variable)
+  if (is.null(metric)) stop("`metric` should be median, mean, min, max, or some other summary function.", call. = F)
+
+  seasonPeriods <- c(24, 2160, 8766) # daily, weekly, quarterly
+  dateFirst <- floor_date(min(data$dateTime), unit = "hour")
+  dateLast <- ceiling_date(max(data$dateTime), unit = "hour")
+
+  dataDay <- data %>% 
+    filter(value > 0) %>% 
+    group_by(dateHour = floor_date(dateTime, unit = "hour")) %>% 
+    summarise(!!variable := metric(!!variable)) %>% 
+    arrange(dateHour) %>% 
+    complete(dateHour = seq(dateFirst, dateLast, "1 hour")) 
+    
+  completeTimeSeries <- ts(dataDay[[variable]],
+                           start = c(year(dateFirst), 
+                                     (yday(dateFirst) - 1) * 24 + hour(dateFirst) + 1), # In the form of year - period within the year, so hours here
+                           frequency = 8766)
+  imputedTimeSeries <- forecast::na.interp(completeTimeSeries, lambda = 1)
+  
+  dataDay <- dataDay %>% 
+    mutate(imputedValue = ifelse(imputedTimeSeries < 0, min(imputedTimeSeries[imputedTimeSeries > 0]), imputedTimeSeries))
+  
+  # Now for decomposition
+  dataMsts <- msts(dataDay[["imputedValue"]],
+                   seasonal.periods = seasonPeriods,
+                   start = start(imputedTimeSeries))
+  decomposition <- mstl(dataMsts, robust = TRUE, lambda = 0)
+  # timeSeries <- ts(dataDay[["imputedValue"]],
+  #                  frequency = 365.25,
+  #                  start = c(year(dateFirst), yday(dateFirst))) # Need obsDate
+  # decomposition <- stl(timeSeries, s.window = "periodic", robust = TRUE)
+  # autoplot(decomposition)
+
+  # Adding the remainder and calculating outliers
+  data %>% 
+    mutate(dateHour = floor_date(dateTime, unit = "hour")) %>% 
+    rename(valueOriginal = value) %>% 
+    left_join(
+      dataDay %>% 
+        mutate(remainder = as.numeric(remainder(decomposition)),
+          # remainder = as.numeric(decomposition$time.series[, "remainder"]),
+               madlist = list(calculateMad("remainder", data = pick(remainder), ...)),
+               remainderMedian = sapply(madlist, "[[", "medianValue"),
+               remainderMad = sapply(madlist, "[[", "madValue"),
+               remainderRangeLow = sapply(madlist, "[[", "rangeLow"),
+               remainderRangeHigh = sapply(madlist, "[[", "rangeHigh"),
+               remainderOutlier = remainder < remainderRangeLow | remainder > remainderRangeHigh
+        ),
+      by = "dateHour"
+    )
+}
+
+what <- mapply(function(metric, minValue, transformation) {
+  # Some groupings might have only 1 or 2 stations; this will cause their
+  # high/low filters to be more extreme than I want to conservatively be. Going
+  # to calculate these filters based on combining them all
+  
+  # This does potentially bias the repeats during the repeats column, e.g.,
+  # event sensors might repeat MORE than hour sensors if both takes the same amount of time
+  # to get fixed/replaced.
+  
+  dataDiff <- metric %>%
     bind_rows() %>% 
+    filter(value > minValue) %>% # Temperature, turbidity, conductivity, and oxygen should never be below 0
     group_by(stationId) %>% 
     mutate(
-      valueDiff = c(NA, diff(value)),
+      valueOutlier = transformation(value),
+      valueDiff = c(NA, diff(valueOutlier)),
       isNewRun = ifelse(is.na(valueDiff) | valueDiff != 0, 1, 0),
       runLength = cumsum(isNewRun)
     ) %>% 
     group_by(stationId, runLength) %>% 
     mutate(repeats = n()) %>% 
     ungroup()
+
+  dataMad <- dataDiff %>%
+    group_by(stationId, sensorNumber) %>%
+    mutate(
+      valueMad = list(calculateMad("valueOutlier", data = pick(valueOutlier), k = 3)),
+      valueDiffMad = list(calculateMad("valueDiff", data = pick(valueDiff), k = 3)),
+      repeatsMad = list(calculateMad("repeats", data = pick(repeats), k = 3)),
+      valueRangeLow = sapply(valueMad, "[[", "rangeLow"),
+      valueRangeHigh = sapply(valueMad, "[[", "rangeHigh"),
+      valueDiffRangeLow = sapply(valueDiffMad, "[[", "rangeLow"),
+      valueDiffRangeHigh = sapply(valueDiffMad, "[[", "rangeHigh"),
+      # repeatsRangeLow = sapply(repeatsMad, "[[", "rangeLow"),
+      repeatsRangeHigh = sapply(repeatsMad, "[[", "rangeHigh")
+    ) %>%
+    select(-c(valueMad, valueDiffMad, repeatsMad)) %>%
+    ungroup() %>% 
+    filter(!(valueOutlier < valueRangeLow),
+           !(valueOutlier > valueRangeHigh),
+           !(valueDiff < valueDiffRangeLow),
+           !(valueDiff > valueDiffRangeHigh),
+           !(repeats > repeatsRangeHigh))
+}, transformation = list(function(x) x, log, log, function(x) x), 
+metric = data$cdec, 
+minValue = 0, SIMPLIFY = F)
+
+data$cdecMad <- lapply(data$cdec, function(metric, 
+                                           minValue = 0) {
+    
+  # Some groupings might have only 1 or 2 stations; this will cause their
+  # high/low filters to be more extreme than I want to conservatively be. Going
+  # to calculate these filters based on combining them all
+  
+  # This does potentially bias the repeats during the repeats column, e.g.,
+  # event sensors might repeat MORE than hour sensors if both takes the same amount of time
+  # to get fixed/replaced.
+
+    dataDiff <- metric %>%
+      bind_rows() %>% 
+      filter(value > minValue,
+             dataFlag != "N") %>% # Temperature, turbidity, conductivity, and oxygen should never be below 0
+      group_by(stationId) %>% 
+      mutate(
+        valueDiff = c(NA, diff(value)) / c(NA, diff(dateTime)), # Standardized by difference in time
+        valueDiffTwo = c(NA, NA, diff(value, lag = 2)) / c(NA, NA, diff(dateTime, lag = 2)), # Standardized by difference in time
+        valueDiffThree = c(NA, NA, NA, diff(value, lag = 3)) / c(NA, NA, NA, diff(dateTime, lag = 3)), # Standardized by difference in time
+        isNewRun = ifelse(is.na(valueDiff) | valueDiff != 0, 1, 0),
+        runLength = cumsum(isNewRun)
+      ) %>% 
+      group_by(stationId, runLength) %>% 
+      mutate(repeats = n()) %>% 
+      ungroup()
+    
+    dataMad <- dataDiff %>%
+      group_by(stationId, sensorNumber) %>%
+      mutate(
+        valueMad = list(calculateMad("value", data = pick(value), k = 3)),
+        valueDiffMad = list(calculateMad("valueDiff", data = pick(valueDiff), k = 6)),
+        valueDiffMadTwo = list(calculateMad("valueDiffTwo", data = pick(valueDiffTwo), k = 6)),
+        valueDiffMadThree = list(calculateMad("valueDiffThree", data = pick(valueDiffThree), k = 6)),
+        repeatsMad = list(calculateMad("repeats", data = pick(repeats), k = 9)),
+        valueRangeLow = sapply(valueMad, "[[", "rangeLow"),
+        valueRangeHigh = sapply(valueMad, "[[", "rangeHigh"),
+        valueDiffRangeLow = sapply(valueDiffMad, "[[", "rangeLow"),
+        valueDiffRangeHigh = sapply(valueDiffMad, "[[", "rangeHigh"),
+        valueDiffRangeLowTwo = sapply(valueDiffMadTwo, "[[", "rangeLow"),
+        valueDiffRangeHighTwo = sapply(valueDiffMadTwo, "[[", "rangeHigh"),
+        valueDiffRangeLowThree = sapply(valueDiffMadThree, "[[", "rangeLow"),
+        valueDiffRangeHighThree = sapply(valueDiffMadThree, "[[", "rangeHigh"),
+        # repeatsRangeLow = sapply(repeatsMad, "[[", "rangeLow"),
+        repeatsRangeHigh = sapply(repeatsMad, "[[", "rangeHigh")
+      ) %>%
+      select(-c(valueMad, valueDiffMad, repeatsMad)) %>%
+      ungroup() %>% 
+      mutate(outlierValue = value < valueRangeLow | value > valueRangeHigh,
+             outlierDiff = valueDiff < valueDiffRangeLow | valueDiff > valueDiffRangeHigh,
+             outlierDiffTwo = valueDiffTwo < valueDiffRangeLowTwo | valueDiffTwo > valueDiffRangeHighTwo,
+             outlierDiffThree = valueDiffThree < valueDiffRangeLowThree | valueDiffThree > valueDiffRangeHighThree,
+             outlierRepeats = repeats > repeatsRangeHigh)
+      # filter(!(value < valueRangeLow),
+      #        !(value > valueRangeHigh),
+      #        !(valueDiff < valueDiffRangeLow),
+      #        !(valueDiff > valueDiffRangeHigh),
+      #        !(repeats > repeatsRangeHigh))
 })
 
+data$cdecDetrend <- lapply(data$cdecMad, function(data) {
+  
+  data <- data %>% 
+    mutate(rowIndex = row_number())
+  keyGroup <- data %>% 
+    # filter(stationId == "ANH", sensorNumber == 4) %>%
+    # bind_rows() %>% 
+    group_by(stationId, sensorNumber) %>% 
+    group_keys()
+  
+  dataDetrend <- data %>% 
+    # filter(stationId == "ANH", sensorNumber == 4) %>%
+    # bind_rows() %>% 
+    group_by(stationId, sensorNumber) %>%
+    group_split() %>%
+    lapply(., function(x) {
+      list(
+        min = tryCatch({
+          outlierDetrend(data = x, variable = value, metric = min, k = 6) %>% 
+            # select(stationId, sensorNumber, remainderOutlier)
+            select(rowIndex, remainderOutlier)
+        },
+        error = function(e) e),
+        max = tryCatch({
+          outlierDetrend(data = x, variable = value, metric = max, k = 6) %>% 
+            # select(stationId, sensorNumber, remainderOutlier)
+            select(rowIndex, remainderOutlier)
+        },
+        error = function(e) e),
+        mean = tryCatch({
+          outlierDetrend(data = x, variable = value, metric = mean, k = 6) %>% 
+            # select(stationId, sensorNumber, remainderOutlier)
+            select(rowIndex, remainderOutlier)
+        },
+        error = function(e) e)
+      )
+    })
+  
+  outlierRemainders <- lapply(1:length(dataDetrend), function(i) {
+    
+    ofInterest <- dataDetrend[[i]]
+    names(ofInterest$min)[2] <- "outlierRemainderMin"
+    names(ofInterest$max)[2] <- "outlierRemainderMax"
+    names(ofInterest$mean)[2] <- "outlierRemainderMean"
+    
+    reduce(ofInterest,
+           left_join,
+           by = "rowIndex")
+  }) %>% 
+    bind_rows()
 
-lapply(names(data$cdecFiltered), function(x) {
-  quantile(data$cdecFiltered[[x]]$repeats, probs = c(0.75, 0.8, 0.85, 0.9, 0.95, 0.97, 0.98, 0.99, 0.995, 
-                                        0.996, 0.997, 0.998, 0.999, 0.9999), 
-           na.rm = TRUE) %>% 
-    data.frame(quantile = names(.),
-               repeats = ., row.names = NULL)
-}) %>% 
-  setNames(names(data$cdecFiltered)) %>% 
-  bind_rows(.id = "variable") %>% 
-  mutate(plotIndex = as.numeric(factor(quantile, 
-                                       levels = c("75%", "80%", "85%", "90%", "95%", "97%", "98%", "99%", "99.5%", 
-                                                  "99.6%", "99.7%", "99.8%", "99.9%", "99.99%")))) %>% 
-  ggplot(aes(plotIndex, repeats)) +
-  geom_line() +
-  scale_x_continuous(breaks = 1:14,
-                     labels = c("75", "80", "85", "90", "95", "97", "98", "99", "99.5",
-                                "99.6", "99.7", "99.8", "99.9", "99.99")) +
-  facet_wrap(~factor(variable, levels = c("TEMPERATURE", "ELEC.* CON.*", 
-                                          "TURBIDITY", "OXYGEN")), scales = "free_y")
-# Temp = 99.9, Elec Con = 99.8, turbidity = 99.6, oxygen = 99.5
+  outlierData <- left_join(data, 
+                           outlierRemainders,
+                           by = "rowIndex") %>% 
+    # mutate(outlierSum = rowSums(across(matches("outlier"), ~as.numeric(.x)))) %>% 
+    unite(outString, outlierValue, outlierDiff, outlierDiffTwo, outlierDiffThree,
+          outlierRepeats, outlierRemainderMin, outlierRemainderMax, outlierRemainderMean,
+          sep = ",",
+          remove = F) %>% 
+    relocate(outString, .after = last_col())
+    
+  replacementNames <- c(
+    "outlierValue", "outlierDiff", "outlierDiffTwo", "outlierDiffThree",
+    "outlierRepeats", "outlierRemainderMin", "outlierRemainderMax", "outlierRemainderMean"
+  )
+  
+  differentGroups <- 
+    unique(outlierData$outString) %>% 
+    data.frame(
+      outString = .,
+      lapply(., function(stringElement) {
+        splitValues <- unlist(strsplit(stringElement, ","))
+        trueIndices <- which(splitValues == "TRUE")
+        resultVector <- splitValues
+        resultSum <- sum(as.logical(resultVector), na.rm = T)
+        if (length(trueIndices) > 0) {
+          # resultVector[trueIndices] <- replacementNames[trueIndices]
+          resultVector <- replacementNames[trueIndices]
+        }
+        data.frame(parsedString = paste(resultVector, collapse = ","),
+                   outlierSum = resultSum)
+      }) %>% 
+        bind_rows()
+    )
+  
+  # outlierNoneGroup <- differentGroups %>% 
+  #   filter(outlierSum == 0) %>% 
+  #   pull(outString)
+  
+  # proportionOutlying <- outlierData %>%
+  #   count(stationId, sensorNumber, remainderOutlier) %>%
+  #   mutate(remainderOutlier = factor(remainderOutlier, levels = c(T, F))) %>% 
+  #   complete(remainderOutlier, stationId, fill = list(n = 0)) %>% 
+  #   pivot_wider(values_from = n, names_from = remainderOutlier) %>%
+  #   mutate(potentialOutlying = `TRUE`/`FALSE`) %>%
+  #   arrange(-potentialOutlying)
+  # # Removing "BLP" for having too many outliers? 3% of the data vs 0.2% from the next highest
+  # # For temp
+  
+  # concoction %in% differentGroups$parsedString
+  # the larger the sum, the more conservative the flag; some usable flags
+  # below sum = 2, but difficult to parse
 
-data$cdecFilteredFinal <- data$cdecFiltered %>% 
-  bind_rows() %>% 
-  mutate(variable = case_when(
+  # dataDetrend %>% 
+  #   filter(!remainderOutlier)
+  outlierData %>% 
+    left_join(
+      differentGroups, by = "outString"
+    )
+    # mutate(outlierFlagged = (parsedString %in% concoction & outlierSum > 2)) 
+    # count(stationId, sensorNumber, parsedString, outlierSum, outlierFlagged) %>% 
+    # View()
+})
+
+concoction <- c(
+  # Based on ANH, sensorNumber 4
+  # value, outlierMin, outlierMax, outlierMean
+  "outlierValue,outlierRemainderMin,outlierRemainderMax,outlierRemainderMean",
+  "outlierValue,outlierRemainderMin,outlierRemainderMean",
+  # value, diff2, diff3, outlierMin, outlierMax, outlierMean
+  "outlierValue,outlierDiffTwo,outlierDiffThree,outlierRemainderMin,outlierRemainderMax,outlierRemainderMean",
+  "outlierValue,outlierDiffTwo,outlierDiffThree,outlierRemainderMax,outlierRemainderMean",
+  "outlierValue,outlierDiffTwo,outlierDiffThree,outlierRemainderMax",
+  "outlierValue,outlierDiffTwo,outlierDiffThree",
+  "outlierValue,outlierDiffThree,outlierRemainderMin,outlierRemainderMax,outlierRemainderMean",
+  "outlierValue,outlierDiff,outlierRemainderMin,outlierRemainderMax,outlierRemainderMean",
+  "outlierValue,outlierDiffTwo,outlierRemainderMin,outlierRemainderMax,outlierRemainderMean",
+  # value, repeats, outlierMin, max, mean
+  "outlierValue,outlierRepeats,outlierRemainderMin,outlierRemainderMax,outlierRemainderMean",
+  "outlierValue,outlierDiff,outlierDiffThree,outlierRemainderMin,outlierRemainderMax,outlierRemainderMean",
+  "outlierValue,outlierDiff,outlierDiffTwo,outlierRepeats,outlierRemainderMin,outlierRemainderMax,outlierRemainderMean",
+  "outlierValue,outlierDiff,outlierDiffTwo,outlierDiffThree,outlierRepeats,outlierRemainderMin,outlierRemainderMax,outlierRemainderMean",
+  "outlierValue,outlierDiffTwo,outlierDiffThree,outlierRepeats,outlierRemainderMin,outlierRemainderMax,outlierRemainderMean",
+  "outlierValue,outlierDiffThree,outlierRepeats,outlierRemainderMin,outlierRemainderMax,outlierRemainderMean",
+  "outlierValue,outlierDiff,outlierDiffTwo,outlierDiffThree,outlierRepeats,outlierRemainderMax,outlierRemainderMean",
+  "outlierValue,outlierDiff,outlierDiffTwo,outlierDiffThree,outlierRepeats,outlierRemainderMax",
+  "outlierValue,outlierDiff,outlierDiffTwo,outlierDiffThree,outlierRepeats",
+  "outlierValue,outlierDiffTwo,outlierDiffThree,outlierRepeats",
+  "outlierValue,outlierDiffThree,outlierRepeats",
+  "outlierValue,outlierRepeats",
+  "outlierValue,outlierRemainderMax,outlierRemainderMean",
+  "outlierValue,outlierDiff,outlierRemainderMax,outlierRemainderMean",
+  "outlierValue,outlierRepeats",
+  "outlierValue,outlierRepeats,outlierRemainderMax,outlierRemainderMean",
+  "outlierValue,outlierRepeats,outlierRemainderMax",
+  # value, diff, diff2, diff3, max, mean
+  "outlierValue,outlierDiff,outlierDiffTwo,outlierDiffThree,outlierRemainderMax,outlierRemainderMean",
+  "outlierValue,outlierDiff,outlierDiffTwo,outlierDiffThree,outlierRemainderMean",
+  # value, diff, diff2, diff3, min, max, mean
+  "outlierValue,outlierDiff,outlierDiffTwo,outlierDiffThree,outlierRemainderMin,outlierRemainderMax,outlierRemainderMean",
+  "outlierValue,outlierDiff,outlierDiffTwo,outlierDiffThree,outlierRemainderMin,outlierRemainderMax",
+  "outlierValue,outlierDiff,outlierDiffTwo,outlierDiffThree,outlierRemainderMin,outlierRemainderMean",
+  # value, diff, diff2, diff3, min
+  "outlierValue,outlierDiff,outlierDiffTwo,outlierDiffThree,outlierRemainderMin",
+  # value, diff2, max, mean
+  "outlierValue,outlierDiffTwo,outlierRemainderMax,outlierRemainderMean",
+  # value, min, max, mean
+  "outlierValue,outlierRemainderMin,outlierRemainderMax,outlierRemainderMean",
+  # value, diff, diff2, diff3, max
+  "outlierValue,outlierDiff,outlierDiffTwo,outlierDiffThree,outlierRemainderMax",
+  # value, diff, diff2, max, mean
+  "outlierValue,outlierDiff,outlierDiffTwo,outlierRemainderMax,outlierRemainderMean",
+  "outValue,outlierDiffTwo,outlierDiffThree,outlierRemainderMean",
+  "outValue,outlierDiffThree,outlierRemainderMean",
+  "outValue,outlierDiff,outlierDiffTwo,outlierDiffThree",
+  # value, diff, diff2, diff3
+  "outlierValue,outlierDiff,outlierDiffTwo,outlierDiffThree",
+  # diff, diff2, diff3, min
+  "outlierDiff,outlierDiffTwo,outlierDiffThree,outlierRemainderMin",
+  # diff2, diff3, min
+  # "outlierDiffTwo,outlierDiffThree,outlierRemainderMin",
+  # "outlierDiffTwo,outlierDiffThree,outlierRemainderMax",
+  "outlierDiff,outlierDiffThree,outlierRemainderMax",
+  "outlierDiffThree,outlierRemainderMin,outlierRemainderMax,outlierRemainderMean",
+  # ANH, 25
+  # diff, diff2, diff3, max
+  "outlierDiff,outlierDiffTwo,outlierDiffThree,outlierRemainderMax",
+  # # diff, diff2, diff3
+  # "outlierDiff,outlierDiffTwo,outlierDiffThree"; no ANH, 4
+  # value, diff, diff2, diff3, repeats
+  # value, repeats
+  "outlierDiff,outlierDiffTwo,outlierRemainderMin,outlierRemainderMax",
+  "outlierDiff,outlierDiffTwo,outlierRemainderMin,outlierRemainderMax,outlierRemainderMean",
+  "outlierDiff,outlierDiffThree,outlierRemainderMin,outlierRemainderMax",
+  "outlierDiff,outlierDiffThree,outlierRemainderMax,outlierRemainderMean",
+  "outlierDiff,outlierDiffThree,outlierRemainderMin,outlierRemainderMax,outlierRemainderMean",
+  "outlierDiff,outlierDiffTwo,outlierDiffThree,outlierRemainderMin,outlierRemainderMax",
+  "outlierDiff,outlierDiffTwo,outlierDiffThree,outlierRemainderMin,outlierRemainderMean",
+  "outlierDiffTwo,outlierDiffThree,outlierRemainderMin,outlierRemainderMean",
+  # "outlierRemainderMin,outlierRemainderMax,outlierRemainderMean",
+  "outlierValue,outlierRemainderMax",
+  "outlierValue,outlierRemainderMean",
+  "outlierDiffThree,outlierRemainderMin,outlierRemainderMean",
+  "outlierDiffTwo,outlierRemainderMin,outlierRemainderMax,outlierRemainderMean",
+  "outlierDiffTwo,outlierDiffThree,outlierRemainderMin,outlierRemainderMax,outlierRemainderMean",
+  "outlierDiff,outlierDiffTwo,outlierDiffThree,outlierRemainderMin,outlierRemainderMax,outlierRemainderMean",
+  "outlierDiff,outlierRemainderMin,outlierRemainderMax,outlierRemainderMean",
+  "outlierDiff,outlierDiffTwo,outlierDiffThree,outlierRemainderMax,outlierRemainderMean",
+  # "outlierDiffTwo,outlierRemainderMax",
+  # "outlierDiffThree,outlierRemainderMin",
+  "outlierDiff,outlierDiffThree,outlierRemainderMin",
+  "outlierValue,outlierDiff,outlierDiffTwo,outlierRemainderMin,outlierRemainderMax,outlierRemainderMean",
+  # "outlierRepeats,outlierRemainderMin,outlierRemainderMax,outlierRemainderMean",
+  "outlierDiff,outlierDiffTwo,outlierDiffThree,outlierRepeats,outlierRemainderMin,outlierRemainderMax,outlierRemainderMean",
+  "outlierDiffTwo,outlierDiffThree,outlierRepeats,outlierRemainderMin,outlierRemainderMax,outlierRemainderMean",
+  "outlierDiffThree,outlierRemainderMax,outlierRemainderMean",
+  "outlierValue,outlierDiffTwo,outlierDiffThree,outlierRemainderMin",
+  "outlierValue,outlierDiffTwo,outlierRemainderMin",
+  # ec
+  "outlierValue,outlierDiffTwo,outlierDiffThree,outlierRepeats,outlierRemainderMax,outlierRemainderMean",
+  "outlierValue,outlierDiffThree,outlierRepeats,outlierRemainderMax,outlierRemainderMean",
+  "outlierValue,outlierDiff,outlierRepeats,outlierRemainderMax,outlierRemainderMean",
+  "outlierValue,outlierDiffTwo,outlierRepeats,outlierRemainderMax,outlierRemainderMean",
+  "outlierValue,outlierDiff,outlierDiffTwo,outlierRepeats,outlierRemainderMax,outlierRemainderMean"
+)
+
+data$cdecLessOutliers <- bind_rows(
+  data$cdecDetrend$TEMPERATURE %>% 
+    mutate(outlierFlagged = ((parsedString %in% concoction & outlierSum > 2) | (value > 45)),
+           flagVic = stationId == "VIC" & ((month(obsDate) == 6 & value < 10) | (month(obsDate) == 12 & value > 25))) %>% 
+    filter(!outlierFlagged, !flagVic),
+  data$cdecDetrend$`ELEC.* CON.*` %>% 
+    mutate(diffSum = rowSums(across(matches("outlierDiff"), ~as.numeric(.x))),
+           outlierFlagged = ((parsedString %in% concoction & diffSum > 2 & grepl(c("Min|Max|Mean"), parsedString)) | 
+                               (value > 50000))) %>% 
+    filter(!outlierFlagged),
+  data$cdecDetrend$TURBIDITY %>% 
+    mutate(outlierFlagged = value > 2000) %>% 
+    filter(!outlierFlagged), 
+  data$cdecDetrend$OXYGEN %>% 
+    mutate(outlierFlagged = value > 30,
+           flagBll = stationId == "BLL" & 
+             (between(dateTime, as.POSIXct("2017-03-06 19:45:00"), as.POSIXct("2017-03-08 09:45:00")) |
+             dateTime > as.POSIXct("2019-06-10 00:00:00")),
+           flagBlp = stationId == "BLP" & (value > 75 |
+                                             between(dateTime, as.POSIXct("2016-12-29 11:45:00"), as.POSIXct("2017-01-03 13:30:00")) |
+                                             between(dateTime, as.POSIXct("2012-11-28 03:00:00"), as.POSIXct("2013-01-01 00:00:00")) |
+                                             between(dateTime, as.POSIXct("2017-12-05 10:30:00"), as.POSIXct("2017-12-07 10:15:00")) |
+                                             between(dateTime, as.POSIXct("2019-11-09 20:15:00"), as.POSIXct("2019-11-09 21:30:00")) |
+                                             between(dateTime, as.POSIXct("2020-01-06 16:30:00"), as.POSIXct("2020-08-31 04:53:00"))),
+           flagGlc = stationId == "GLC" & between(dateTime, as.POSIXct("2020-06-24 19:45:00"), as.POSIXct("2020-07-01 08:15:00"))
+           ) %>% 
+    filter(!outlierFlagged, !flagBll, !flagBlp, !flagGlc)
+) %>% 
+  transmute(
+    stationId, sensorNumber, sensorType, dateTime,
+    obsDate, value, dataFlag, units, outlierFlagged,
+    variable = case_when(
     grepl("TEMP", sensorType) ~ "temperature",
     grepl("COND", sensorType) ~ "conductivity",
     grepl("TURB", sensorType) ~ "turbidity",
     grepl("OXY", sensorType) ~ "oxygen"
-  )) %>% 
-  filter(grepl("TEMP", sensorType) & repeats <= 48 |
-         grepl("COND", sensorType) & repeats <= 49 |
-         grepl("TURB", sensorType) & repeats <= 59 |
-         grepl("OXY", sensorType) & repeats <= 76)
+  ))
 
-data$cdecSpatialAggregation <- data$cdecFilteredFinal %>% 
+
+data$cdecSpatialAggregation <- data$cdecLessOutliers %>% 
   left_join(
     data$cdecMetadata %>% 
       filter(!is.na(SubRegion)) %>% 
@@ -1800,12 +2184,11 @@ data$cdecSpatialAggregation %>%
   facet_wrap(~variable, scales = "free_y") 
 # Some weirdness in the water temperature data
 data$cdecSpatialAggregation %>% 
-  filter(variable == "temperatureWater") %>% 
+  filter(variable == "conductivityBottom") %>% 
   ggplot(aes(obsDate, valueSpatial, color = SubRegion)) +
   geom_line(show.legend = F) + 
   facet_wrap(~SubRegion) 
-# Cache Slough and Lindsey Slough
-# Victoria Canal
+# dataNew.RData up to this point
 
 # Seems as though some regions don't have a full dataset
 missingDays <- data$cdecSpatialAggregation %>% 
