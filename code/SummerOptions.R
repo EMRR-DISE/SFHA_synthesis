@@ -1,6 +1,7 @@
 #How often do we hit the Polanksy et al summer flow threshold?
 
 library(tidyverse)
+library(cder)
 
 # The approximate values at which P λt > 50% are 15.8C
 # for spring temperature, 18 biomass per unit volume (BPUV) of spring adult copepod and mysid (ACM), 
@@ -10,9 +11,9 @@ library(tidyverse)
 #June-August delta outflow of 25 million cubic meters per day
 #translatest: 25,000,000 m3/day * 1day/86400sec * 35.3 ft3/m3 = 10,214 cfs
 
-load("data/Dayflow_allw2023.RData")
+load("data/dayflow_w2024.RData")
 yrs = read_csv("data/wtryrtype.csv") %>%
-  rename(YrType = `Yr-type`, Year = WY) %>%
+  rename( Year = WY) %>%
   mutate(YrType = factor(YrType, levels = c("C", "D", "BN", "AN", "W")))
 
 #What's the average summer outflow?
@@ -26,7 +27,7 @@ Dayf = mutate(Dayflow, Month = month(Date)) %>%
 
 ggplot(Dayf, aes(x = Year, y = OUT, fill = YrType))+
   geom_col(color = "black")+
-  geom_hline(yintercept = 10214)+
+  geom_hline(yintercept = 10800)+
   geom_hline(yintercept = 15000, linetype =2)+
   scale_fill_manual(values = c("firebrick3", "darkorange", "yellow2", "palegreen2", "skyblue"))+
   ylab("Average summer outflow, cfs")

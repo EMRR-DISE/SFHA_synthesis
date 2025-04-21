@@ -4,10 +4,15 @@ library(cder)
 library(tidyverse)
 library(zoo)
 library(wql)
+# 
+# load("data/Dayflow_allw2023.RData")
+# DF2024 = read_csv("https://data.cnra.ca.gov/dataset/06ee2016-b138-47d7-9e85-f46fae674536/resource/6a7cb172-fb16-480d-9f4f-0322548fee83/download/dayflowcalculations2024.csv")
+# Dayflow = bind_rows(Dayflow, DF2024)
+# save(Dayflow, file = "Data/dayflow_w2024.RData")
 
-load("data/Dayflow_allw2023.RData")
+load("data/dayflow_w2024.RData")
 
-X2cdec = cdec_query("CX2", 145, start.date = ymd("2000-01-01"), end.date = ymd("2023-09-01"))
+X2cdec = cdec_query("CX2", 145, start.date = ymd("2008-01-01"), end.date = ymd("2024-10-31"))
 
 cdX2 = X2cdec %>%
   rename(CDEC = Value) %>%
@@ -59,6 +64,15 @@ ggplot(X2weekly2)+
   ylab("X2")+
   xlab("Day of year")
 
+##############################################
+#plot for synthesis report - X2 during actions
+
+X2actions = filter(bothX2, Month %in% c(6:10), Year %in% c(2011, 2017, 2019, 2023, 2024))
+
+ggplot(X2actions, aes(x = DOY, y = CDEC, color = as.factor(Year))) + geom_line()
+
+ggplot(X2actions, aes(x = DOY, y = X2, color = as.factor(Year))) + geom_line()
+
 ######## Check some of the stations that can give us an estimate ####
 # The X2 position is estimated by the Projects in the lower Sacramento River 
 # when the daily average EC is below 2.64 mS/cm at Collinsville and above 2.64 mS/cm at Martinez.  
@@ -74,11 +88,19 @@ ggplot(X2weekly2)+
 
 #Other stations to try are C10, C05, EMM (95 Decker), RVB (100 RIo Vista)
 
-X2stats = cdec_query(c("MRZ", "PCT", "PTS", "CSE", "EMM", "RVB"), 100, 
+X2stats = cdec_query(c("MRZ", "PCT", "PTS", "CSE"), 100, 
                      start.date = ymd("2010-01-01"), end.date = today())
 
-stations = data.frame(StationID = c("MRZ", "PCT", "PTS", "CSE", "EMM", "RVB"),
-             RKI = c(56, 64, 74, 81, 94, 100))
+stations = data.frame(StationID = c("MRZ", "PCT", "PTS", "CSE"),
+             RKI = c(56, 64, 74, 81))
+
+
+#monthly averages
+X2monthly = X2stats %>%
+  mutate(Month = month(ObsDate), Year = year(ObsDate)) %>%
+  group_by(Month, Year, StationID) %>%
+  summarize(EC = mean(Value, na.rm =T)) %>%
+  left_join(stations)
 
 #So 3.8 mS/cm is about 2 PSU
 ec2pss(3.8, 25)
@@ -98,12 +120,21 @@ ggplot(test, aes(x = RKI, y = EC))+ geom_point()+ geom_smooth()
 
 
 #function to interpolate X2
-X2interp = function(X2daily) {
-  x2lm = loess(EC ~ RKI, data = X2daily)
-  RKIs = data.frame(RKI = c(50:100))
+X2interp = function(dat) {
+  donstream = filter(dat, EC < 2640)
+  upstream = filter(dat, EC > 2640)
+  if(nrow(donstream) ==0) {
+    X2 = ">81"
+  } else{
+    if(nrow(upstream) ==0) X2 = "<56" else {
+  inputs = bind_rows(filter(donstream, EC == max(EC)),
+                     filter(upstream, EC == min(EC)))
+  x2lm = lm(EC ~ RKI, data = inputs)
+  RKIs = data.frame(RKI = seq(50,85, by = 0.1))
   Xs = mutate(RKIs, ppred = predict(x2lm, RKIs)/1000) %>%
-    mutate(ppred2 = ppred-2.64) 
-  X2 = filter(Xs, ppred2 == min(abs(ppred2), na.rm =T))$RKI
+    mutate(PSU = ec2pss(ppred, 25), PSU2 = PSU-1.361877) %>%
+    filter(!is.na(ppred))
+  X2 = as.character(filter(Xs, PSU2 == min(abs(PSU2), na.rm =T)|PSU2 == -1*min(abs(PSU2), na.rm =T))$RKI)}}
   return(X2)
 }
 
@@ -115,6 +146,36 @@ X2s = test %>%
   group_by(Date) %>%
   do(X2 = X2interp(.))
 #meh, i don't know why this isn't working.
+
+test = X2interp(filter(X2monthly, Year == 2024, Month ==9))
+test
+#OK, except we know X2 was 80.5 in september of 2024....
+
+X2monthlyfinal = X2monthly %>%
+  group_by(Year, Month)  %>%
+  do(data.frame(X2 = X2interp(.)))
+
+
+
+#Oh, wait, we can maybe check out CEDEC x2 as a function of salintiy at those two places? Maybe?
+
+X2stab = X2stadaily %>%
+  select(StationID, Date, EC) %>%
+  pivot_wider(names_from= StationID, values_from = EC) %>%
+  left_join(cdX2)
+
+ggplot(X2stab) + geom_smooth(aes(x = CDEC, y = PCT), color = "darkred")+ geom_smooth(aes(x = CDEC, y = CSE))+
+  geom_smooth(aes(x = CDEC, y = PTS), color = "darkgreen")+geom_smooth(aes(x = CDEC, y = MRZ), color = "black")+
+  ylab("EC")
+  
+ggplot(X2stab) + geom_smooth(aes(x = CDEC, y = ec2pss(PCT/1000, 25)), color = "darkred")+ 
+  geom_smooth(aes(x = CDEC, y = ec2pss(CSE/1000, 25)))+
+  geom_smooth(aes(x = CDEC, y = ec2pss(PTS/1000, 25)), color = "darkgreen")+geom_smooth(aes(x = CDEC, y = ec2pss(MRZ/1000, 25)), color = "black")+
+  ylab("Salinity")+ geom_hline(yintercept = 1.36)
+
+#a little off, but I guess OK. I'll have to get the official numbers from someone else later.
+
+
 
 ###outflow################
 
@@ -130,20 +191,56 @@ Dayflowrecent = filter(Dayflow, year(Date) >2000, OUT>0)  %>%
          Good15 = case_when(Year %in% yearsYes15 ~ TRUE,
                             TRUE ~ FALSE)) %>%
   left_join(yrs, by =c("Year" = "WY")) %>%
-  mutate(YrType = factor(`Yr-type`, levels = c("C", "D", "BN", "AN", "W")))
+  mutate(YrType = factor(YrType, levels = c("C", "D", "BN", "AN", "W")),
+         YrTypeMay1 = factor(YrTypeMay1, levels = c("C", "D", "BN", "AN", "W")))
 
 ggplot(Dayflowrecent, aes(x = DOY, y = OUT, group = as.factor(Year), color = YrType, linetype =  Good))+ 
   geom_line(size = 1)+
   coord_cartesian(xlim = c(150, 300), ylim = c(0, 50000))+
   scale_x_continuous(breaks = c(153,183, 214, 245, 275), labels = c("Jun", "Jul", "Aug", "Sep", "Oct"))+
-  geom_hline(yintercept = 10000, color = "black", linetype =4, size =1)+
+  geom_hline(yintercept = 10800, color = "black", linetype =4, size =1)+
   scale_color_manual(values = c("firebrick4", "firebrick2", "orange", "springgreen3", "dodgerblue"), name = "Year Type")+
-  xlab("Sacramento Valley Water Year Index")+
-  scale_linetype_manual(values = c(1,2), labels = c("No", "Yes"), name = c("Do we hit \nthe 10K CFS \nThreshold?"))+
+  xlab("Day of year")+
+  scale_linetype_manual(values = c(1,2), labels = c("No", "Yes"), name = c("Do we hit \nthe 10.8K CFS \nThreshold?"))+
   ylab("Daily average Outflow (CFS)")+
   theme_bw()
 
+#just 2024, to compare with Ian
 
+ggplot(filter(Dayflowrecent, Year == 2024))+ 
+  geom_line(aes(x = DOY, y = OUT, color = "Outflow"),size = 1)+ 
+  geom_line(aes(x = DOY, y = EXPORTS, color = "exports"),size = 1)+
+  coord_cartesian(xlim = c(150, 300), ylim = c(0, 30000))+
+  scale_x_continuous(breaks = c(153,183, 214, 245, 275), labels = c("Jun", "Jul", "Aug", "Sep", "Oct"))+
+  ylab("Flow - cfs") + ggtitle("Dayflow data")
+
+
+#now check out cdec ndoi and exports
+
+outflow2024 =  cdec_query("DTO",23, durations = "D", start.date = as.Date("2024-06-01"), as.Date("2024-10-31")) %>%
+  rename(Date = DateTime, OUT = Value) %>%
+  select(Date, OUT) 
+
+Exports2024 = cdec_query(stations = c("TRP", "HRO"), sensors = 70, start.date = ymd("2023-10-01"),
+                         end.date = today()) %>%
+  pivot_wider(id_cols = c(DateTime), names_from = StationID, values_from = Value) %>%
+  mutate(DOY = yday(DateTime), CVP = HRO, SWP = TRP, Year = year(DateTime), Date = date(DateTime))
+
+Ex2024 = group_by(Exports2024, Date, DOY, Year) %>%
+  summarise(SWP = mean(SWP, na.rm = TRUE), CVP = mean(CVP, na.rm =T)) %>%
+  mutate(YT = case_when(Year == 2023 ~ "Wet",
+                        Year == 2024 ~ "2024"),
+         Month = month(Date)) %>%
+  filter(Month %in% c(6:10))
+
+outex = left_join(outflow2024, Ex2024)
+
+ggplot(outex)+
+  geom_line(aes(x = Date, y = OUT, color = "Outflow"))+
+  geom_line(aes(x = Date, y = CVP+SWP, color = "CVP+SWP exports"))+
+  ggtitle("CDEC Data")+
+  ylab("Flow - cfs") 
+  
 
 
 ggplot(Dayflowrecent, aes(x = DOY, y = OUT, group = as.factor(Year), color = YrType, linetype = Good15))+ 
@@ -152,7 +249,7 @@ ggplot(Dayflowrecent, aes(x = DOY, y = OUT, group = as.factor(Year), color = YrT
   scale_x_continuous(breaks = c(153,183, 214, 245, 275), labels = c("Jun", "Jul", "Aug", "Sep", "Oct"))+
   geom_hline(yintercept = 15000, color = "black", linetype =2)+
   scale_color_manual(values = c("firebrick4", "firebrick2", "orange", "springgreen3", "dodgerblue"), name = "Year Type")+
-  xlab("Sacramento Valley Water Year Index")+
+  xlab("Day of year")+
   scale_linetype_manual(values = c(1,2), labels = c("No", "Yes"), name = c("Do we hit \nthe 15K CFS \nThreshold?"))+
   ylab("Daily average Outflow (CFS)")+
   theme_bw()
@@ -164,11 +261,16 @@ ggplot(Dayflowrecent, aes(x = DOY, y = X2, group = as.factor(Year), color = Good
   scale_x_continuous(breaks = c(153,183, 214, 245, 275), labels = c("Jun", "Jul", "Aug", "Sep", "Oct"))+
   geom_hline(yintercept = 10000, color = "black", linetype =2)
 
+ggplot(Dayflowrecent, aes(x = DOY, y = X2, group = Year, color = YrType))+ geom_line()+
+  coord_cartesian(xlim = c(150, 300), ylim = c(50, 100))+
+  scale_x_continuous(breaks = c(153,183, 214, 245, 275), labels = c("Jun", "Jul", "Aug", "Sep", "Oct"))+
+  geom_hline(yintercept = 10000, color = "black", linetype =2)
+
 #####################################
 #break it out by month
 Dayflowmonthly = mutate(Dayflowrecent, Month = month(Date)) %>%
   filter(Month %in% c(6:10)) %>%
-  group_by(Month, Year, Good, Good15, YrType, Index) %>%
+  group_by(Month, Year, Good, Good15, YrType, YrTypeMay1, Index) %>%
   summarize(OUT = mean(OUT, an.rm =T))
 
 
@@ -193,32 +295,10 @@ ggplot(Dayflowmonthly, aes(x = as.factor(Month), y = OUT, fill = YrType))+
   facet_wrap(~Year)+
   geom_text(aes(y = 10000, label = round(OUT/1000)))
 
-YRs2 = data.frame(Year = c(2001:2023), YrTypeMay1 = c("D", "D", "AN", "BN", "BN", "W", "D", "C",
-                                                      "D", "BN", "W", "BN", "D", "C", "C", "BN", "W", "BN", "W",
-                                                      "D", "C", "C", "W"))
-
-
-#Outflow from 2024
-Out2024 = cdec_query("DTO", 23, start.date = ymd("2023-10-01"), end.date = ymd("2024-10-31"))
-
-Out2024monthly = Out2024 %>%
-  mutate(Year = year(DateTime), Month = month(DateTime)) %>%
-  group_by(Month, Year) %>%
-  summarize(OUT = mean(Value)) %>%
-  mutate(YrTypeMay1 = case_when(Year == 2023 ~ "W",
-                                Year == 2024 ~ "AN")) %>%
-  filter(Month %in% c(6:10))
-
-DayflowmonthlyX = left_join(Dayflowmonthly, YRs2) %>%
-  bind_rows(Out2024monthly)
-
-ggplot(DayflowmonthlyX, aes(x = as.factor(Month), y = OUT/1000, fill = YrTypeMay1))+
+ggplot(Dayflowmonthly, aes(x = as.factor(Month), y = OUT, fill = YrTypeMay1))+
   geom_col()+
   facet_wrap(~Year)+
-  geom_text(aes(y = 10, label = round(OUT/1000)))+
-  xlab("Month")+
-  ylab("Mean Monthly Outflow (thousand cfs)")
-
+  geom_text(aes(y = 10000, label = round(OUT/1000)))
 
 ######unimpared flow#############
 
@@ -289,4 +369,19 @@ ggplot(LSMcrit, aes(x = Index, y = Value))+
   scale_color_manual(values = c("firebrick4", "firebrick2", "orange", "springgreen3", "dodgerblue"), name = "Year Type")+
   xlab("Sacramento Valley Water Year Index")
 
+#Let's compare CDEC outflow versus dayflow outflow
 
+OUTall = cdec_query("DTO", 23, start.date = ymd("2001-01-01"), end.date = "2024-12-31")
+
+outcomp = left_join(OUTall, Dayflowrecent, by = c("ObsDate" = "Date")) %>%
+  filter(Value >0) %>%
+  mutate(Diff = OUT-Value) %>%
+  filter(abs(Diff) < 100000) %>%
+  select(Year, ObsDate, OUT, Value, Diff, YrType, YrTypeMay1)
+
+ggplot(outcomp, aes(x = Value, y = OUT)) + geom_point(aes(color = as.factor(Year)))+
+  ylab("Dayflow NDOI")+ xlab("CDEC station DTO NDOI")+
+  geom_abline(slope =1, intercept =0)
+
+ggplot(outcomp, aes(x = ObsDate, y = Value))+ geom_point(aes(color = Diff))+geom_line()+
+    scale_color_viridis_c()

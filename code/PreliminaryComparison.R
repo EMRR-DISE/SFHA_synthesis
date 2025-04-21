@@ -149,6 +149,23 @@ library(effects)
 plot(allEffects(lm1))
 #OK, that makes more sense
 
+
+#average salinity at Belden's landing during each of the actions
+
+actions = data.frame(Year = c(2018, 2023, 2024),
+                     StartDate = c(ymd("2018-08-01"), ymd("2023-08-15"), ymd("2024-7-15")),
+                     endDate =c(ymd("2018-09-06"), ymd("2023-10-17"), ymd("2024-09-30")))
+
+actionsal = BDL %>%
+  mutate(Salinity = ec2pss(Value/1000, 25), Date = date(ObsDate),
+         Year = year(ObsDate), Mo = month(ObsDate)) %>%
+  left_join(actions) %>%
+  filter(Date >= StartDate, Date <= endDate)
+
+actionsave = actionsal %>%
+  group_by(Year) %>%
+  summarize(Salinity = mean(Salinity, na.rm =T))
+
 #Smelt caught in summer and fall versus X2 and gate operations
 #pull all sme\lt catch from deltafish?
 # library(deltafish)
@@ -192,9 +209,9 @@ load("data/smelt.RData")
 
 smeltCPUE = filter(smelt, !is.na(Tow_volume)) %>%
   mutate(CPUE = Count/Tow_volume, Year = year(Date), Month = month(Date)) %>%
-  group_by(Source, Region, Year, Month, SampleID) %>%
+  group_by(Source, Region, Year, Month, SampleID, Method) %>%
   summarize(Count = sum(Count, na.rm =T), CPUE = sum(CPUE)) %>%
-  group_by(Source, Region, Year, Month) %>%
+  group_by(Source, Region, Year, Month, Method) %>%
   summarize(CPUE = mean(CPUE, na.rm =T), Count = sum(Count)) %>%
   mutate(Season = case_when(
                             Month %in% c(3,4,5) ~ "Spring",
@@ -246,6 +263,51 @@ ggplot(filter(smeltCPUE, Source %in% c("SKT", "DJFMP", "EDSM"), Month %in% c(1,2
 #set some bayesian priors for prevelance of smelt. 
 #start with just two groups, flow versus not-flow
 
+smeltCPUE3 = filter(smelt, !is.na(Tow_volume),
+  Source %in% c("FMWT", "STN", "20mm", "SKT", "EDSM")) %>%
+  mutate(CPUE = Count/Tow_volume, Year = year(Date), Month = month(Date)) %>%
+  group_by(Source, Region, Year, Month, SampleID, Method) %>%
+  summarize(Count = sum(Count, na.rm =T), CPUE = sum(CPUE)) %>%
+  group_by(Source, Year, Month, Method) %>%
+  summarize(CPUE = mean(CPUE, na.rm =T), Count = sum(Count)) %>%
+  mutate(Season = case_when(
+    Month %in% c(3,4,5) ~ "Spring",
+    Month %in% c(6,7,8)~ "Summer",
+    Month %in% c(12,1, 2)~ "Winter",
+    Month %in% c(9,10, 11) ~ "Fall"),
+    Cohort = case_when(Method == "Kodiak trawl" & Month %in% c(1,2,3) ~ Year-1,
+                       TRUE ~ Year),
+    Yearmonth = Year + (Month-1)/12) %>%
+  left_join(DF)
+
+
+ggplot(smeltCPUE3, aes(x = Yearmonth, y = CPUE)) + geom_point()+ geom_line()
+
+ggplot(smeltCPUE3, aes(x = Month, y = CPUE, color = as.factor(Cohort))) + geom_point() + geom_line()
+
+Fallx2s = filter(DF, Month %in% c(9,10)) %>%
+  group_by(Year) %>%
+  summarize(FallX2 = mean(X2))
+
+smeltCPUE3fall = left_join(smeltCPUE3, Fallx2s, by = c("Cohort" = "Year")) %>%
+  filter(Month %in% c(9:12), Source %in% c("FMWT", "EDSM")) %>%
+  group_by(Cohort) %>%
+  summarize(fallCPUE = mean(CPUE))
+
+smeltCPUE3spawn = left_join(smeltCPUE3, Fallx2s, by = c("Cohort" = "Year")) %>%
+  filter(Month %in% c(1:3),  Source %in% c("EDSM", "SKT")) %>%
+  group_by(Cohort, FallX2) %>%
+  summarize(CPUE = mean(CPUE)) %>%
+  left_join(smeltCPUE3fall)
+
+ggplot(smeltCPUE3spawn, aes(x = FallX2, y = log(CPUE+1))) + 
+  geom_point() + geom_smooth(method = "lm")
+
+ggplot(smeltCPUE3spawn, aes(x = FallX2, y = CPUE/fallCPUE)) + 
+  geom_point() + geom_smooth(method = "lm")+ geom_text(aes(label = Cohort))+
+  ylab("Ratio of spring spawners to average fall CPUE")
+
+ggplot()
 #### smelt versus flow ###############################
 
 names(smeltCPUE)
@@ -255,7 +317,7 @@ DF = Dayflow %>%
   mutate(Month = month(Date)) %>%
   group_by( Year, Month) %>%
   filter(OUT >1) %>%
-  summarize(OUT = mean(OUT, na.rm =T)) 
+  summarize(OUT = mean(OUT, na.rm =T), X2 = mean(X2)) 
 smeltCPUE2 = left_join(smeltCPUE, DF) %>%
   group_by(Month, Year, Region, Season) %>%
   summarize(CPUE = mean(CPUE), OUT = mean(OUT))
@@ -265,6 +327,10 @@ ggplot(smeltCPUE2, aes(x = log(OUT), y = log(CPUE+1)))+
   geom_point()+
   geom_smooth(method = "lm")+
   facet_wrap(~Season, scales = "free_y")
+
+#OK, correlate spring smelt to fall smelt + X2
+
+smeltCPUE = mutate(smeltCPUE, Cohort)
 
 #####Pseudodiaptomus #############################################################################
 #Pseudodiaptomus in Suisun Bay, SuisuN Marsh versus X2 and gate operations
@@ -381,3 +447,9 @@ ggplot()+
   geom_sf(data = WW_Delta)+
   geom_sf(data = Regions, aes(fill = Region), alpha = 0.5)+
   coord_sf(xlim =c(-122.2, -121.6), ylim = c(38, 38.3))
+
+
+Testdat = data.frame(X = c(1:10), Y = c(5:14))
+
+ggplot(Testdat, aes(x = X, y = Y, fill = Y)) + geom_col()+
+  scale_fill_gradient(low = "red", high = "black")

@@ -85,7 +85,12 @@ pseudo_data_mass<-zoop_data%>%
 
 
 ggplot(pseudo_data_mass, aes(x = doy, y = BPUE_log1p)) + geom_smooth()+
-  scale_x_continuous(breaks = c(153, 183, 214), labels = c("Jun", "Jul", "Aug"))
+  scale_x_continuous(breaks = c(153, 183, 214), labels = c("Jun", "Jul", "Aug"))+
+  coord_cartesian(xlim = c(153, 230))
+
+ggplot(pseudo_data_mass, aes(x = doy, y = BPUE)) + geom_smooth()+
+  scale_x_continuous(breaks = c(153, 183, 214), labels = c("Jun", "Jul", "Aug"))+
+  coord_cartesian(xlim = c(153, 230))
 
 ####### Prediction model ###############################
 
@@ -239,7 +244,29 @@ ggplot(filter(ps_conversions_plot, Month %in% c(6:10)), aes(x=SalSurf, y=median,
 #load zoop data from 2011:2024
 zoop_datarecent <-Zoopsynther(Data_type="Community", Sources=c("EMP", "STN", "20mm", "FMWT"), 
                        Time_consistency = FALSE, Years = c(2011:2024), Size_class = "Meso")
+#most of the data from 2024 isn't public yet, data from Spenser
+smscgto2024 <- read_csv("C:/Users/rhartman/OneDrive - California Department of Water Resources/salinity control gates/SMSCG/Data/smscgto2024_zooplankton_long.csv")
 
+smscgto2024a = mutate(smscgto2024, DOY = yday(Date)) %>%
+  filter(Year %in% c(2023, 2024))%>%
+  mutate(Taxlifestage=str_remove(Taxlifestage, fixed("_UnID")))%>%
+  filter(Taxlifestage %in% c("Pseudodiaptomus forbesi Adult", "Pseudodiaptomus Adult",
+                             "Pseudodiaptomus Juvenile")) %>%
+  mutate(Taxlifestage = recode(Taxlifestage,#
+                               `Pseudodiaptomus Adult`="Pseudodiaptomus forbesi Adult"))
+
+#ok, good, same format, regions are already on there.
+#maybe join this after the other stuff has the regions added
+#need salinity data
+fmwtmeta = read_csv("C:/Users/rhartman/OneDrive - California Department of Water Resources/salinity control gates/SMSCG/Data/SMSCG_CBNet_2018to2024CPUE_03Feb2025.csv")
+
+fmwtmet = fmwtmeta %>%
+  select(Project, Date, Station, CondSurf) %>%
+  distinct() %>%
+  mutate(Source = Project, Station = as.character(Station), 
+         SalSurf = ec2pss(CondSurf/1000, 25), Date = mdy(Date))
+
+smscgto2024b = left_join(smscgto2024a, fmwtmet)
 
 #Process the zoop data
 
@@ -263,6 +290,7 @@ pseudo_data_mass2<-zoop_datarecent%>%
   st_join(select(Regions, Region)) %>%
   st_drop_geometry() %>% 
   filter(!is.na(Region))%>%
+  bind_rows(smscgto2024b) %>%
   mutate(doy=yday(Date), #Day of year
          Month=month(Date), # Month
          Year_fac=factor(Year), # Factor year for model random effect
@@ -275,11 +303,11 @@ pseudo_recent = group_by(pseudo_data_mass2, Month, Region, Year) %>%
   summarize(SalSurf = mean(SalSurf, na.rm =T), BPUE = mean(BPUE_log1p))
 
 yrs = read_csv("data/wtryrtype.csv") %>%
-  rename(Year = WY, YrType = `Yr-type`) %>%
+  rename(Year = WY) %>%
   select(Year, WYsum, Index, YrType, Action)
 
 pseudo_recent = left_join(pseudo_recent, yrs)
-
+save(pseudo_data_mass,pseudo_recent,pseudo_data_mass2, file = "data/pseudo_data_mass.RData")
 #now add it to the plot of the ealier data
 
 ggplot(ps_conversions_plot, aes(x=SalSurf, y=median, ymin=l95, ymax=u95))+
@@ -309,7 +337,8 @@ ggplot(ps_conversions_plot, aes(x=SalSurf, y=median, ymin=l95, ymax=u95))+
 #I"m not sure the best way, but I think this works
 pseudo_recent_wpred = mutate(pseudo_recent, Sal = SalSurf, SalSurf = round(SalSurf, digits =1)) %>%
   left_join(ps_conversions_plot) %>%
-  mutate(residual = median - BPUE)
+  mutate(residual = median - BPUE,
+         YrType = factor(YrType, levels = c("C", "D", "BN", "AN", "W")))
 
 ggplot(pseudo_recent_wpred, aes(x = as.factor(Month), y = residual, fill = Action, color = Action))+
   geom_boxplot()+
@@ -318,10 +347,21 @@ ggplot(pseudo_recent_wpred, aes(x = as.factor(Month), y = residual, fill = Actio
 
 
 ggplot(pseudo_recent_wpred, aes(x = as.factor(Month), y = residual, fill = YrType, color = YrType))+
-  geom_boxplot()+
-  scale_color_manual(values = c("darkred", "darkgreen", "blue", "purple", "pink"))+
+  geom_boxplot(alpha = 0.5)+
+  scale_color_manual(values = c("darkred", "orange3", "yellow4", "springgreen4", "blue"))+
+  scale_fill_manual(values = c("darkred", "orange", "yellow", "springgreen4", "blue" ))+
   facet_wrap(~Region)+
   geom_hline(yintercept = 0, linetype =2)
+
+
+ggplot(pseudo_recent_wpred, aes(x = as.factor(Year), y = BPUE, fill = YrType, color = YrType))+
+  geom_boxplot(alpha = 0.5)+
+  scale_color_manual(values = c("darkred", "orange3", "yellow4", "springgreen4", "blue"))+
+  scale_fill_manual(values = c("darkred", "orange", "yellow", "springgreen4", "blue" ))+
+  facet_wrap(~Region)+
+  theme_bw()+ ylab("Pseudodiaptomus biomass") +  xlab("Year")+
+  theme(axis.text.x = element_text(angle = 90))
+
 
 
 ggplot(pseudo_recent_wpred, aes(x = Index, y = residual, fill = YrType, color = YrType))+

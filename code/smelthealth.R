@@ -9,7 +9,7 @@ library(effects)
 
 mypal = c(brewer.pal(8, "Dark2"), brewer.pal(8, "Set2"), "black", "purple", "skyblue")
 
-health = read_excel("Data/Master_ordered_srdwsc_zoop.xlsx", sheet = "Master_ordered")
+health = read_excel("Data/Master_ordered_srdwsc_zoop.xlsx", sheet = "Master_ordered", guess_max = 10000)
 excel_sheets("Data/Master_ordered_srdwsc_zoop.xlsx")
 metadata = read_excel("Data/Master_ordered_srdwsc_zoop.xlsx")
 
@@ -183,5 +183,58 @@ ggplot(health, aes(x = as.factor(cohort...7), y = tag)) +
 ##############################################################
 
 
+#get the station locations
+EDSM20mm = read_csv("https://portal.edirepository.org/nis/dataviewer?packageid=edi.415.11&entityid=d468c513fa69c4fc6ddc02e443785f28")
+
+EDSMSKT = read_csv("https://portal.edirepository.org/nis/dataviewer?packageid=edi.415.11&entityid=4d7de6f0a38eff744a009a92083d37ae")
+
+EDSMstas = bind_rows(EDSM20mm, EDSMSKT) %>%
+select(RegionCode, Subregion, Stratum, Phase, StationCode, LatitudeStart, LongitudeStart, SampleDate) %>%
+  distinct() %>% #multiple tows per station, I'll just take the start of the first tow
+  group_by(Phase, StationCode, SampleDate) %>%
+  summarise(Latitude = first(LatitudeStart), Longitude = first(LongitudeStart)) %>%
+  mutate(survey_char = "edsm")
+
+#why do we have some duplicates?
+foo = EDSMstas %>%
+  group_by(StationCode, SampleDate) %>%
+  summarise(n = n()) %>%
+  filter(n>1) %>%
+  left_join(EDSMstas)
+
+library(deltamapr)
+stas2 = deltamapr::P_Stations %>%
+  st_drop_geometry() %>%
+  filter(Source %in% c("FMWT", "STN", "SKT")) %>%
+  mutate(survey_char = case_when(Source == "FMWT" ~ "fmwt",
+                                 Source == "STN" ~ "stn", 
+                                 Source == "SKT" ~ "skt")) %>%
+  rename(StationCode = Station) %>%
+  select(Latitude, Longitude, survey_char, StationCode) %>%
+  group_by(survey_char, StationCode) %>%
+  summarize(Latitude = first(Latitude), Longitude = first(Longitude))
+
+allstas = bind_rows(EDSMstas, stas2) %>%
+  distinct()
+
+healthstas = select(health, fish_id, casette_number, station, collection_date, survey_char) %>%
+  left_join(allstas, by = c("station" = "StationCode", "survey_char"))
+
+#Grab the fish ID from EDSM
+extract_after_slash <- function(input_string) {
+  pattern <- "(?<=/)\\w+"
+  ID = case_when(str_detect(input_string, "/") ~ stringr::str_extract_all(input_string, pattern, simplify = T),
+                 TRUE ~ input_string)
+  return(ID)
+}
+
+EDSMsmelt = bind_rows(EDSM20mm, EDSMSKT) %>%
+  select(RegionCode, Subregion, Stratum, Phase, StationCode, LatitudeStart, LongitudeStart, SampleDate, SpecialStudyID,
+         NetSize, TowNumber, TowSchedule, TowDuration, Volume, Secchi, MarkCode, ForkLength) %>%
+  filter(!is.na(SpecialStudyID)) %>%
+  mutate(DOPID = extract_after_slash(SpecialStudyID))
 
 
+EDSMsmeltall =  filter(health, survey_char == "edsm") %>%
+  select(fish_id, casette_number, collection_date) %>%
+  left_join(EDSMsmelt, by = c("fish_id" = "DOPID"))
