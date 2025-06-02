@@ -12,42 +12,86 @@ library(cder)
 library(sf)
 library(wql)
 
-conflicts_prefer(lmerTest::lmer)
-conflicts_prefer(dplyr::filter)
-conflicts_prefer(dplyr::select)
-#question - should i seperate adults and copepedites? or combine theM?
-
-#other question - what about P. marinus? Do I just not wory about the fact that we don't have juveniels to species?
-
-#### Load Data ####################
+# conflicts_prefer(lmerTest::lmer)
+# conflicts_prefer(dplyr::filter)
+# conflicts_prefer(dplyr::select)
+# #question - should i seperate adults and copepedites? or combine theM?
+# 
+# #other question - what about P. marinus? Do I just not wory about the fact that we don't have juveniels to species?
+# 
+# #### Load Data ####################
 yrs = read_csv("data/wtryrtype.csv") %>%
-  rename(YrType = `Yr-type`, Year = WY)
+  rename(Year = WY)
 
 load("data/SMSCGRegions.RData")
-load("data/Dayflow_allw2023.RData")
+load("data/dayflow_w2024.RData")
 DF = filter(Dayflow, Year >2009) %>%
   mutate(Month = month(Date)) %>%
   select(Date, Month, Year, OUT, X2)
+# 
+# pseudos = Zoopsynther(Data_type = "Community", Years = c(2011:2022), 
+#                       Sources = c("EMP", "FMWT", "STN", "20mm", "DOP"),
+#                       Size_class = "Meso",
+#                       Month = c(6:10)) %>%
+#   filter(Genus == "Pseudodiaptomus", Lifestage != "Larva") %>%
+#   filter(!is.na(Longitude)) %>%
+#   st_as_sf(coords = c("Longitude", "Latitude"), crs = 4326) %>%
+#   st_transform(crs = st_crs(Regions))%>%
+#   st_join(Regions) %>%
+#   st_drop_geometry() %>%
+#   filter(!is.na(Region))
+# 
+# 
+# #how much of this is marinsu versus forbesi?
+# 
+# pseudostest = group_by(pseudos, Species, Lifestage) %>%
+#   summarize(CPUE = sum(CPUE)) %>%
+#   filter(!is.na(Species))
+# pseudos$CPUE[1]/sum(pseudos$CPUE)
+# 
+# #most of the data from 2024 isn't public yet, data from Spenser
+# smscgto2024 <- read_csv("C:/Users/rhartman/OneDrive - California Department of Water Resources/salinity control gates/SMSCG/Data/smscgto2024_zooplankton_long.csv")
+# 
+# smscgto2024a = mutate(smscgto2024, DOY = yday(Date)) %>%
+#   filter(Year %in% c(2023, 2024))%>%
+#   mutate(Taxlifestage=str_remove(Taxlifestage, fixed("_UnID")))%>%
+#   filter(Taxlifestage %in% c("Pseudodiaptomus forbesi Adult", "Pseudodiaptomus Adult",
+#                              "Pseudodiaptomus Juvenile")) %>%
+#   mutate(Taxlifestage = recode(Taxlifestage,#
+#                                `Pseudodiaptomus Adult`="Pseudodiaptomus forbesi Adult"))
+# 
+# #ok, good, same format, regions are already on there.
+# #maybe join this after the other stuff has the regions added
+# #need salinity data
+# fmwtmeta = read_csv("C:/Users/rhartman/OneDrive - California Department of Water Resources/salinity control gates/SMSCG/Data/SMSCG_CBNet_2018to2024CPUE_03Feb2025.csv")
+# 
+# fmwtmet = fmwtmeta %>%
+#   select(Project, Date, Station, CondSurf, PDIAPFOR, PDIAPJUV) %>%
+#   distinct() %>%
+#   mutate(Source = Project, Station = as.character(Station), 
+#          SalSurf = ec2pss(CondSurf/1000, 25), Date = mdy(Date),
+#          CPUE =(PDIAPFOR+PDIAPJUV)) #I need to check and make sure this is right.
+# 
+# smscgto2024b = left_join(smscgto2024a, fmwtmet)
+# 
+# psudoall = bind_rows(pseudos, smscgto2024b)
+# 
+# save(psudoall, file = "data/psudoall.RData")
 
-pseudos = Zoopsynther(Data_type = "Community", Years = c(2011:2023), 
-                      Sources = c("EMP", "FMWT", "STN", "20mm", "DOP"),
-                      Size_class = "Meso",
-                      Month = c(6:10)) %>%
-  filter(Genus == "Pseudodiaptomus", Lifestage != "Larva")
+load("data/psudoall.RData")
 
-pseudo = group_by(pseudos, SampleID, Latitude, Station, Longitude, SalSurf, TowType, Source, Date, Year) %>%
+pseudo = group_by(psudoall, SampleID, Station, SalSurf,  Source, Date, Year, Region) %>%
   summarize(CPUE = sum(CPUE)) %>%
   left_join(yrs) %>%
   left_join(DF) %>%
   mutate(logCPUE = log(CPUE+1))
 
-pseudoreg = pseudo %>%
-  filter(!is.na(Longitude)) %>%
-  st_as_sf(coords = c("Longitude", "Latitude"), crs = 4326) %>%
-  st_transform(crs = st_crs(Regions))%>%
-  st_join(Regions) %>%
-  st_drop_geometry() %>%
-  filter(!is.na(Region))
+#make sure I got everything right
+
+ggplot(pseudo, aes(x = Year, y = CPUE, fill = Source))+ geom_col()
+
+#yu
+pseudoreg = pseudo
 
 hist(pseudoreg$CPUE)
 hist(log(pseudoreg$CPUE))
@@ -88,17 +132,59 @@ summary(zm2)
 plot(simulateResiduals(zm2))
 testZeroInflation(zm2)
 plot(allEffects(zm2))
-#OK! no longer zero inflated. I think we are OK!
+#The test statistic is the ratio of observed to simulated zeros. A value < 1 means that the observed data have fewer 
+#zeros than expected, a value > 1 means that they have more zeros than expected (aka zero inflation).
 
+##########################THIS IS MODEL #!
 #sometime the negative binomial is enough without the zip term
 
 zm3 = glmmTMB(CPUE ~ X2*Region + (1|Month) + (1|Year),  family=nbinom2, data = pseudoreg) 
-summary(zm3)
+foo = summary(zm3)
 plot(simulateResiduals(zm3))
 testZeroInflation(zm3)
 plot(allEffects(zm3))
-#yeah, just leave out the zero inflation so long as you have the negative binomial. 
+#Huh, so now there are fewer zeros than expeted
 #all of these results match our expectations pretty darn well anyway.
+
+write.csv(summary(zm3)$coefficients$cond, "outputs/ZoopsX2model.csv")
+
+#pairwise scomparisons
+emmeans(zm3, pairwise  ~ Region)
+zm3trends = emtrends(zm3,pairwise ~ Region, var = "X2")
+plot(emtrends(zm3,pairwise ~ Region, var = "X2"))
+
+write.csv(zm3trends, file = "outputs/ZoopX2trends.csv")
+plot(allEffects(zm3, residuals = T))
+zm3eff = allEffects(zm3, residuals = T)[[1]]
+
+zm3effects = data.frame(X2 = zm3eff$x$X2, Region= zm3eff$x$Region,
+                        fit =  zm3eff$fit, Lower = zm3eff$lower, Upper = zm3eff$upper)
+
+zm3resid = data.frame(X2 = zm3eff$x.all$X2, Region= zm3eff$x.all$Region, fita = predict(zm3),
+                      resid =  zm3eff$residual) %>%
+  mutate(partial = resid+fita)
+###############################################
+
+#for ITP analysis - is there a relationship in fall?
+
+
+zm3fall = glmmTMB(CPUE ~ X2*Region + (1|Month) + (1|Year),  family=nbinom2, data = filter(pseudoreg, Month %in% c(9,10))) 
+foo = summary(zm3fall)
+
+plot(allEffects(zm3fall))
+
+
+# #############
+# ggplot(zm3effects, aes(x = X2, y = fit)) + 
+#  # geom_point(data = zm3resid, aes(y = partial), alpha = 0.3, size =1)+
+#   geom_ribbon(aes(ymin = Lower, ymax = Upper), alpha = 0.5)+
+#   geom_smooth(method = "lm")+
+#   facet_wrap(~Region)+
+#   ylab("CPUE - partial residuals")+
+#   xlab("X2 (km)")+
+#   theme_bw()
+# 
+# ggsave("plots/ZoopX2modeloutcome.tiff", device = "tiff", width =5, height =5, dpi = 400)
 
 ##########now try salinity at belden's #################
 BDL = cdec_query("BDL", 
@@ -128,13 +214,82 @@ testZeroInflation(bdlm2)
 plot(allEffects(bdlm2))
 #ok, so lower salintiy in the marsh gives you more of a change in zoops in the marsh than in the other regions,
 #but even suisun bay has some impcat above the X2 impact. I think. 
-library(emmeans)
 
 emtrends(bdlm2, pairwise ~ Region, var = "X2")
 emtrends(bdlm2, pairwise ~ Region, var = "Salinity")
 
+write.csv(summary(bdlm2)$coefficients$cond, "outputs/SalinityAndX2Zoopmod.csv")
+
+
+# 
+# #um, maybe visreg?
+# library(visreg)
+# 
+# bdlm2vis = visreg(bdlm2, xvar = "X2", by = "Region")
+# bdlm2visS = visreg(bdlm2, xvar = "Salinity", by = "Region")
+# 
+# 
+# pseudo3 = filter(pseudo2, !is.na(Salinity), !is.na(X2)) %>%
+#   bind_cols(PredictionX2 = predict(bdlm2, newdata = bdlm2vis[[2]])) %>%
+#   bind_cols(PredictionSal = predict(bdlm2, newdata = bdlm2visS[[2]])) %>%
+#   mutate(X2resid = CPUE -PredictionX2, Salresid = CPUE-PredictionSal)
+# 
+# p1 = ggplot(bdlm2vis[[1]])+
+#   geom_ribbon(aes(x = X2, ymin = visregLwr, ymax = visregUpr), alpha = 0.5)+
+#   geom_line(aes(x = X2, y = visregFit), size =1, color = "blue")+
+#   #geom_point(data = bdlm2vis[[2]], aes(x = X2, y = visregRes), alpha = 0.2)+
+#   #geom_point(data = pseudo3, aes(x = X2, y = X2resid), alpha = 0.2)+
+#   facet_wrap(~Region)+
+#   theme_bw()+
+#   ylab("CPUE - partial residuals")
+# 
+# p2 = ggplot(bdlm2visS[[1]])+
+#   geom_ribbon(aes(x = Salinity, ymin = visregLwr, ymax = visregUpr), alpha = 0.5)+
+#   geom_line(aes(x = Salinity, y = visregFit), size =1, color = "blue")+
+#   #geom_point(data = bdlm2visS[[2]], aes(x = Salinity, y = visregRes), alpha = 0.2)+
+#   #geom_point(data = pseudo3, aes(x = Salinity, y = Salresid), alpha = 0.2)+
+#   facet_wrap(~Region)+
+#   theme_bw()+
+#   ylab("CPUE - partial residuals")
+# 
+# 
+# library(patchwork)
+# p1+p2
+# 
+# ggsave("plots/ZoopX2Salmodeloutcome.tiff", device = "tiff", width =5, height =5, dpi = 400)
+# #i'm temptd to leave the partial residuals off...
+# 
+
+###########################################
+#plots of raw data for report - versus X2 and versus salinity
+
+p1 = ggplot(pseudo2, aes(x = X2, y = logCPUE))+
+  geom_point(aes(color = Salinity))+
+  scale_color_viridis_c(name = "Salinity \nat BDL")+
+  facet_wrap(~Region)+
+  geom_smooth(method = "lm")+
+  theme_bw()+
+  ylab("ln(CPUE+1) of Pseudodiaptomus")+
+  theme(legend.position = "bottom")
+
+p2 = ggplot(pseudo2, aes(x = Salinity, y = logCPUE))+
+  geom_point(aes(color = X2))+
+  scale_color_viridis_c(name = "X2 (km)", option = "B")+
+  facet_wrap(~Region)+
+  geom_smooth(method = "lm")+
+  theme_bw()+
+  ylab("ln(CPUE+1) of Pseudodiaptomus")+
+  xlab("Salinity at BDL")+
+  theme(legend.position = "bottom")
+
+p1+p2
+ggsave("plots/ZoopREgressions.tiff", device = "tiff", width = 10, height =6)
+
+###############################################
 #but is this too colinear to even work?
 library(performance)
+
+check_collinearity(mod2)
 
 #ok, this istn' working
 check_collinearity(bdlm2)
@@ -148,6 +303,10 @@ plot(allEffects(bdlm2z))
 #"low correlation" interesting. I would have thought X2 was pretty darn correlated with salinity, 
 #but I guess not too much
 
+ggplot(pseudo2, aes(x = X2, y = Salinity)) + geom_point()+geom_smooth()+
+  facet_wrap(~Region)
+
+acf(residuals(bdlm2z))
 ###############predictions ####################
 #how low does X2 need to be in order so see similar Pseudodiaptomus as the river?
 #median river Psudo abundance
@@ -185,7 +344,10 @@ ggplot(X2mods, aes(x = Month, y = Year, fill = X2needed))+
   geom_tile()+
   geom_text(aes(label = round(X2needed)))+
   facet_wrap(~Region)+
-  scale_fill_viridis_c()
+  scale_fill_viridis_c()+
+  theme_bw()
+
+ggsave("plots/ZoopPredictedX2.tiff", device = "tiff", width =7, height =5)
 
 #Now what is the difference between X2 needed and X2 actual?
 X2actual = select(Dayflow, Date, Year, X2) %>%
@@ -194,14 +356,21 @@ X2actual = select(Dayflow, Date, Year, X2) %>%
   summarize(X2 = mean(X2, na.rm =T))
 
 X2mods = left_join(X2mods, X2actual) %>%
-  mutate(X2diff = X2needed-X2)
+  mutate(X2diff = X2needed-X2,
+         numscale = case_when(X2diff <= -5 ~ 1,
+                              TRUE ~ 2))
 
 ggplot(X2mods, aes(x = Month, y = Year, fill = X2diff))+
   geom_tile()+
-  geom_text(aes(label = round(X2diff), color = X2diff))+
+  geom_text(aes(label = round(X2diff), color = numscale))+
   facet_wrap(~Region)+
   scale_fill_viridis_c(option = "B")+
-  scale_color_viridis_c(option = "B", begin =1, end =0, guide = NULL)
+  scale_color_manual(values = c("black", "white"), guide = NULL)+
+  theme_bw()
+
+ggsave("plots/ZoopX2diff.tiff", device = "tiff", width =7, height =5)
+
+
 ###########BDL versus X2########################BDL versus X2#############Years
 
 BDLX2 = left_join(BDLx, DF) %>%
@@ -269,11 +438,11 @@ plot(allEffects(bdlm2z))
 pseudo2 = mutate(pseudo2, SalBin = case_when(SalSurf < 0.5 ~ "Fresh",
                                              SalSurf >=0.5 & SalSurf < 6 ~ "LSZ",
                                              SalSurf >=6  ~ "3 high"),
-                 SalBin2 = case_when(SalSurf < 0.1 ~ "Fresh <0.1",
-                                     SalSurf >= 0.1 &SalSurf < 0.5 ~ "Freshish 0.1-0.5",
+                 SalBin2 = case_when(SalSurf < 0.1 ~ "Very Fresh <0.1",
+                                     SalSurf >= 0.1 &SalSurf < 0.5 ~ "Fresh 0.1-0.5",
                                     SalSurf >=0.5 & SalSurf < 6 ~ "LSZ 0.5-6",
                                     SalSurf >=6  ~ "Salty >6"),
-                 SalBin2 = factor(SalBin2, levels = c("Fresh <0.1", "Freshish 0.1-0.5", "LSZ 0.5-6", "Salty >6"))) 
+                 SalBin2 = factor(SalBin2, levels = c("Very Fresh <0.1", "Fresh 0.1-0.5", "LSZ 0.5-6", "Salty >6"))) 
 
 sallm = glmmTMB(CPUE ~ X2*SalBin2 + (1|Month) + (1|Year),  family=nbinom2, data = pseudo2) 
 summary(sallm)
@@ -282,6 +451,31 @@ emtrends(sallm,  pairwise ~ SalBin2, var = "X2")
 #huh, this has pseudos increasing with increasing X2 even in the freshwater zone. 
 #overall, we definitely get more pseudos in higher flows regardless of slinity zone
 
+ggplot(filter(pseudo2, !is.na(SalBin2)), aes(x = X2, y = logCPUE)) +
+  facet_wrap(~SalBin2)+
+  geom_point(aes(color = Salinity))+
+  scale_color_viridis_c(name = "Salinity \nat BDL")+
+  geom_smooth(method = "lm")+
+  theme_bw()+
+  ylab("ln(CPUE+1) of Pseudodiaptomus")+
+  theme(legend.position = "bottom")
+
+ggsave("plots/zoopsbysalbin.tiff", device = "tiff", width =6, height =6)
+
+
+
+#what about fall only?
+
+sallmfall = glmmTMB(CPUE ~ X2*SalBin2 + (1|Month) + (1|Year),  family=nbinom2, 
+                    data = filter(pseudo2, Month %in% c(9,10))) 
+summary(sallmfall)
+
+sallmfall3 = glmmTMB(CPUE ~ log(OUT)*SalBin2 + (1|Month) + (1|Year),  family=nbinom2, 
+                    data = filter(pseudo2, Month %in% c(9,10))) 
+summary(sallmfall3)
+plot(allEffects(sallmfall3))
+
+ggplot(filter(pseudo2, Month %in% c(9,10)), aes(x = log(OUT), y = log(CPUE), color = as.factor(Year)))+ geom_point()
 #################################################
 #britt wants outflow instead of X2
 
@@ -362,3 +556,31 @@ ggplot(OUTmods, aes(x = Month, y = Year, fill = OUT))+
   facet_wrap(~Region)+
   scale_fill_viridis_c(option = "B")+
   scale_color_viridis_c(option = "B", begin =1, end =0, guide = NULL)
+
+#########################################################################
+#OK, now let's run them again with the exact same data to compare BIC
+
+pseudo3 = filter(pseudo2, !is.na(Salinity), !is.na(X2), !is.na(SalBin2))
+
+mod1 = glmmTMB(CPUE ~ X2*Region +(1|Month) + (1|Year),  family=nbinom2, data = pseudo3) 
+mod2 = glmmTMB(CPUE ~ X2*Region +Salinity*Region + (1|Month) + (1|Year),  family=nbinom2, data = pseudo3) 
+mod3 = glmmTMB(CPUE ~ X2*SalBin +(1|Month) + (1|Year),  family=nbinom2, data = pseudo3) 
+mod3.1 = glmmTMB(CPUE ~ X2*SalBin2 +(1|Month) + (1|Year),  family=nbinom2, data = pseudo3) 
+
+
+BIC(mod1)
+BIC(mod2)
+BIC(mod3)
+#OK, so BIC for model 2 is an improvement, 3 is even better
+
+summary(mod3)
+emtrends(mod3,pairwise ~ SalBin, var = "X2")
+plot(emtrends(mod3,pairwise ~ Region, var = "X2"))
+
+
+summary(mod3.1)
+emtrends(mod3.1,pairwise ~ SalBin2, var = "X2")
+plot(emtrends(mod3.1,pairwise ~ SalBin2, var = "X2"), comparison =T)
+
+plot(allEffects(mod1, residuals = T))
+plot(allEffects(mod2, residuals = T))

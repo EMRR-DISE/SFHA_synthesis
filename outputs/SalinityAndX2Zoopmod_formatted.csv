@@ -1,0 +1,28 @@
+,Estimate,Std. Error,z value,Pr(>|z|),
+(Intercept),19.834,1.214,16.340,<.0001,
+X2,-0.188,0.018,-10.496,<.0001,
+RegionRiver,-8.777,1.203,-7.293,<.0001,
+RegionSuisun Bay,-2.545,1.203,-2.116,0.0344,
+RegionSuisun Marsh,-3.898,1.335,-2.920,0.0035,
+Salinity,0.018,0.052,0.352,0.7246,
+X2:RegionRiver,0.156,0.018,8.568,<.0001,
+X2:RegionSuisun Bay,0.046,0.018,2.536,0.0112,
+X2:RegionSuisun Marsh,0.085,0.020,4.233,<.0001,
+RegionRiver:Salinity,-0.178,0.054,-3.305,0.0009,
+RegionSuisun Bay:Salinity,-0.100,0.055,-1.803,0.0713,
+RegionSuisun Marsh:Salinity,-0.364,0.057,-6.403,<.0001,
+,,,,,
+,,,,,
+Var,contrast,estimate,SE,z.ratio,p.value
+X2,Grizzly Bay - River,-0.156,0.018,-8.568,<.0001
+X2,Grizzly Bay - Suisun Bay,-0.047,0.018,-2.536,0.0545
+X2,Grizzly Bay - Suisun Marsh,-0.085,0.020,-4.233,0.0001
+X2,River - Suisun Bay,0.110,0.010,11.166,<.0001
+X2,River - Suisun Marsh,0.072,0.013,5.740,<.0001
+X2,Suisun Bay - Suisun Marsh,-0.038,0.013,-3.001,0.0143
+BDLSalinity,Grizzly Bay - River,0.178,0.054,3.305,0.0053
+BDLSalinity,Grizzly Bay - Suisun Bay,0.100,0.055,1.803,0.2717
+BDLSalinity,Grizzly Bay - Suisun Marsh,0.364,0.057,6.403,<.0001
+BDLSalinity,River - Suisun Bay,-0.078,0.027,-2.871,0.0213
+BDLSalinity,River - Suisun Marsh,0.187,0.030,6.265,<.0001
+BDLSalinity,Suisun Bay - Suisun Marsh,0.265,0.032,8.183,<.0001

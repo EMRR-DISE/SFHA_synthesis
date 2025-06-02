@@ -93,3 +93,71 @@ ggplot(saldaily, aes(x = DOY, y = Salinity, group = Year, color = YrType)) + geo
   geom_vline(xintercept = c(153, 245))+
   scale_color_manual(values = c("firebrick3", "darkorange", "yellow3", "green3", "skyblue2"))+
   theme_bw() + ylab("Daily average Salinity (PSU)") + xlab("Day of Year")
+
+
+###########################################
+#modeling results
+
+
+extract_after_first_space <- function(input_string) {
+  return(gsub("^\\S+\\s+", "", input_string))
+}
+
+
+
+area2016names = read_csv("C:/Users/rhartman/OneDrive - California Department of Water Resources/Modeling/DS BEM_HSI/data/2016_combined_lsz_area_less_than_6.0.csv", col_names = F)[1:2,]
+
+a2016names = t(area2016names) %>%
+  as.data.frame() %>%
+  mutate(Name = paste(V1, V2))
+
+area2016data = read_csv("C:/Users/rhartman/OneDrive - California Department of Water Resources/Modeling/DS BEM_HSI/data/2016_combined_lsz_area_less_than_6.0.csv", col_names = F, skip =3)
+
+names(area2016data) = a2016names$Name
+
+area2016 = area2016data %>%
+  select(`scenario region`, contains("Suisun Marsh"), contains("Suisun Bay")) %>%
+  pivot_longer( cols = c(`10800-3-m Suisun Marsh`:last_col()), 
+                        names_to = "Scenario2", values_to = "Area") %>%
+  mutate(Region = extract_after_first_space(Scenario2)) %>%
+  rename(Date = `scenario region`)
+
+area2016$Scenariox = str_split(area2016$Scenario2, " ")
+area2016$Scenario = sapply(area2016$Scenariox, first)
+  
+
+######2024
+
+area2024names = read_csv("C:/Users/rhartman/OneDrive - California Department of Water Resources/Modeling/DS BEM_HSI/data/2024_combined_lsz_area_less_than_6.0.csv", col_names = F)[1:2,]
+
+a2024names = t(area2024names) %>%
+  as.data.frame() %>%
+  mutate(Name = paste(V1, V2))
+
+area2024data = read_csv("C:/Users/rhartman/OneDrive - California Department of Water Resources/Modeling/DS BEM_HSI/data/2024_combined_lsz_area_less_than_6.0.csv", col_names = F, skip =3)
+
+names(area2024data) = a2024names$Name
+
+area2024 = area2024data %>%
+  select(`scenario region`, contains("Suisun Marsh"), contains("Suisun Bay")) %>%
+  pivot_longer( cols = c(`10800-3-m Suisun Marsh`:last_col()),
+                        names_to = "Scenario2", values_to = "Area") %>%
+  mutate(Region = extract_after_first_space(Scenario2)) %>%
+  rename(Date = `scenario region`)
+
+area2024$Scenariox = str_split(area2024$Scenario2, " ")
+area2024$Scenario = sapply(area2024$Scenariox, first)
+
+
+allarea = bind_rows(mutate(area2016, Year = 2016),
+                    mutate(area2024, Year = 2024)) %>%
+  select(-Scenario2, -Scenariox) %>%
+  mutate(DOY = yday(Date), Month = month(Date)) %>%
+  filter(Month %in% c(6:10))
+
+areamean = group_by(allarea, Scenario, Year, DOY, Month, Date) %>%
+  summarize(Area = sum(Area, na.rm =T)) %>%
+  group_by(Scenario, Year) %>%
+  summarise(Area = mean(Area))
+
+write.csv(areamean, "MeanSummerHab.csv")

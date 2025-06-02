@@ -1,0 +1,38 @@
+,Estimate,Std. Error,z value,Pr(>|z|),
+(Intercept),17.798,0.785,22.662,<0.0001,
+X2,-0.160,0.009,-16.942,<0.0001,
+RegionRiver,-5.227,0.704,-7.428,<0.0001,
+RegionSuisun Bay,-0.722,0.696,-1.037,0.2995,
+RegionSuisun Marsh,3.966,0.817,4.854,<0.0001,
+X2:RegionRiver,0.099,0.009,11.548,<0.0001,
+X2:RegionSuisun Bay,0.016,0.008,1.873,0.0610,
+X2:RegionSuisun Marsh,-0.037,0.010,-3.745,0.0002,
+,,,,,
+,,,,,
+contrast,estimate,SE,df,z.ratio,p.value
+Grizzly Bay - River,-0.0991,0.00858,Inf,-11.548,<.0001
+Grizzly Bay - Suisun Bay,-0.0159,0.00849,Inf,-1.873,0.2396
+Grizzly Bay - Suisun Marsh,0.0373,0.00996,Inf,3.745,0.001
+River - Suisun Bay,0.0832,0.00508,Inf,16.387,<.0001
+River - Suisun Marsh,0.1364,0.0071,Inf,19.195,<.0001
+Suisun Bay - Suisun Marsh,0.0532,0.00713,Inf,7.463,<.0001
+,,,,,
+,,,,,
+,Estimate,Std. Error,z value,Pr(>|z|),
+(Intercept),11.210,0.620,18.073,<.0001,***
+X2,-0.038,0.008,-4.972,<.0001,***
+SalBin2Fresh 0.1-0.5,2.172,0.587,3.703,0.000213,***
+SalBin2LSZ 0.5-6,2.585,0.530,4.879,<.0001,***
+SalBin2Salty >6,-3.615,0.900,-4.019,<.0001,***
+X2:SalBin2Fresh 0.1-0.5,-0.026,0.008,-3.345,0.000823,***
+X2:SalBin2LSZ 0.5-6,-0.046,0.007,-6.610,<.0001,***
+X2:SalBin2Salty >6,0.000,0.011,0.014,0.989028,
+,,,,,
+,,,,,
+contrast,estimate,SE,df,z.ratio,p.value
+Very Fresh <0.1 - (Fresh 0.1-0.5),0.026,0.008,Inf,3.345,0.0046
+Very Fresh <0.1 - (LSZ 0.5-6),0.046,0.007,Inf,6.61,<.0001
+Very Fresh <0.1 - Salty >6,0.000,0.011,Inf,-0.014,1
+(Fresh 0.1-0.5) - (LSZ 0.5-6),0.020,0.007,Inf,2.964,0.0161
+(Fresh 0.1-0.5) - Salty >6,-0.026,0.011,Inf,-2.488,0.0618
+(LSZ 0.5-6) - Salty >6,-0.047,0.010,Inf,-4.85,<.0001
