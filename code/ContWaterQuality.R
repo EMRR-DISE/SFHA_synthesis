@@ -17,6 +17,36 @@ WQsumdaily = WQsum %>%
   group_by(Date, Year, Month, DOY, region, Analyte) %>%
   summarize(Value = mean(Value, na.rm =T))
 
+###########################################
+#quick look at achlorohpyll
+
+
+chl = WQ %>%
+  select(station, year, date_time_pst, fluorescence, region) %>%
+  filter(!is.na(fluorescence)) %>%
+  mutate(Date = date(date_time_pst), Year = year(Date), Month = month(Date), DOY = yday(Date),
+         region = case_match(station, c("GZL", "GZB", "GZM") ~ "Grizzly Bay",
+                             .default = region))
+
+chldaily = chl %>%
+  group_by(Date, Year, Month, DOY, region) %>%
+  summarize(Fluorescence = mean(fluorescence, na.rm =T))
+
+
+ggplot(chldaily, aes(x = region, y = Fluorescence)) + geom_boxplot()+
+  facet_wrap(~Year)
+
+
+ggplot(chl, aes(x = region, y = fluorescence)) + geom_boxplot()+
+  facet_wrap(~Year)
+
+chldisc = wq(Sources = c("EMP", "USGS_CAWSC", "USGS_SFBS"), Start_year = 2010, End_year = 2024)
+
+ggplot(chldaily, aes(x = DOY, y = Fluorescence, color = as.factor(Year)))+ geom_line()+
+  facet_wrap(~region)
+
+ggplot(chldisc, aes(x = Source, y = Chlorophyll))+ geom_boxplot()
+
 ##############################################
 #grab a bit more data from north delta and south delta for ITP ammendment
 
@@ -71,7 +101,6 @@ ggplot(filter(WQsumdaily2, Analyte == "watertemperature", Year >2018, DOY %in% c
   xlab("Month")+
   scale_color_discrete(name = "Year")+
   theme_bw()
-
 
 
 
@@ -144,13 +173,47 @@ ggplot(WQsumannual, aes(x = year, y = Suitable, fill = region))+
 yrs = read_csv("data/wtryrtype.csv") %>%
   rename(year = WY)
 
-WQsuman = left_join(WQsumannual, yrs)
+WQsuman = left_join(WQsumannual, yrs) %>%
+  mutate(YrType = factor(YrType, levels = c("C", "D", "BN", "AN", "W")),
+         Action = case_match(Action, "FallX2" ~ "X2",
+                             "FallX2+Gates" ~ "X2+SMSCG",
+                             "Gates" ~ "SMSCG",
+                             .default = Action))
 
 ggplot(WQsuman, aes(x = Index, y = Suitable))+
   geom_point()+ geom_smooth(method = "lm")+
   facet_wrap(Analyte~region, scales = "free_y")+
   ylab("Days of Suitable Habitat")+
   xlab("Water Year Index")
+
+ggplot(WQsuman, aes(x = year, y = Suitable, fill = YrType)) +
+  geom_col()+ facet_grid(Analyte~region)+
+  geom_text(aes(y=10, x = year, label = Action), angle = 90, hjust =0)+
+  theme_bw()+
+  scale_fill_manual(values =c("red", "orange", "yellow", "limegreen", "skyblue"),
+                    labels = c("critical", "dry", "below normal", "above normal", "wet"))+
+  ylab("Days of Suitable Habitat")
+
+
+ggplot(filter(WQsuman, region == "Bay", Analyte == "GoodSmeltHabitat"), aes(x = year, y = Suitable, fill = YrType)) +
+  geom_col()+ facet_grid(Analyte~region)+
+  geom_text(aes(y=10, x = year, label = Action), angle = 90, hjust =0)+
+  theme_bw()+
+  scale_fill_manual(values =c("red", "orange", "yellow", "limegreen", "skyblue"),
+                    labels = c("critical", "dry", "below normal", "above normal", "wet"))+
+  ylab("Days of Suitable Habitat")
+
+
+
+
+ggplot(filter(WQsuman, region == "Marsh", Analyte == "GoodSmeltHabitat"), aes(x = year, y = Suitable, fill = YrType)) +
+  geom_col()+ facet_grid(Analyte~region)+
+  geom_text(aes(y=10, x = year, label = Action), angle = 90, hjust =0)+
+  theme_bw()+
+  scale_fill_manual(values =c("red", "orange", "yellow", "limegreen", "skyblue"),
+                    labels = c("critical", "dry", "below normal", "above normal", "wet"))+
+  ylab("Days of Suitable Habitat")
+
 
 #Average X2
 load("data/Dayflow_allw2023.RData")
@@ -166,12 +229,12 @@ WQsuman2 = left_join(WQsuman, X2, by = c("year", "Season")) %>%
   mutate(PercentTime = case_when(Season == "Summer" ~ Suitable/92,
                                  Season == "Fall" ~ Suitable/61))
 
-
+#Let's break it out by summer vsersus fall
 ggplot(WQsuman2, aes(x = X2, y = PercentTime, color = Season))+
   geom_point()+ geom_smooth(method = "lm")+
   facet_grid(Analyte~region, scales = "free_y")+
   ylab("Percent time habitat is suitable")+
   xlab("average seasonal X2")
 
-#Let's break it out by summer vsersus fall
+
 

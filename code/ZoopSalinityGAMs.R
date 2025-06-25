@@ -36,11 +36,11 @@ load("Data/SMSCGRegions.RData")
 # 
 load("data/dayflow_w2024.RData")
 # 
-# DF = Dayflow %>%
-#   mutate(Month = month(Date)) %>%
-#   group_by( Year, Month) %>%
-#   filter(OUT >1) %>%
-#   summarize(OUT = mean(OUT, na.rm =T)) 
+DF = Dayflow %>%
+  mutate(Month = month(Date)) %>%
+  group_by( Year, Month) %>%
+  filter(OUT >1) %>%
+  summarize(OUT = mean(OUT, na.rm =T))
 # 
 # 
 # 
@@ -86,6 +86,12 @@ load("data/dayflow_w2024.RData")
 # 
 # save(pseudo_data_mass, file = "data/pseudo_data_mass.RData")
 load("data/pseudo_data_mass.RData")
+zoopsflow = bind_rows(pseudo_data_mass2, pseudo_data_mass) %>%
+  
+  left_join(select(filter(Dayflow,OUT >0), Date, Year, Month, OUT)) %>%
+  mutate(logout = log(OUT), logout_s = scale(logout)) %>%
+  filter(!is.na(OUT), doy %in% c(150:310))
+
 
 ggplot(pseudo_data_mass, aes(x = doy, y = BPUE_log1p)) + geom_smooth()+
   scale_x_continuous(breaks = c(153, 183, 214), labels = c("Jun", "Jul", "Aug"))+
@@ -118,7 +124,7 @@ newdata_function<-function(region, data=pseudo_data_mass, quant=0.99){
     summarise(l=quantile(SalSurf, lower),
               u=quantile(SalSurf, upper), .groups="drop")
   
-  newdata<-expand_grid(date=mdy(paste(1:12, 15, 2001, sep="/")), # The 15th of each month on a non-leap year
+  newdata<-expand_grid(date=mdy(paste(6:10, 15, 2010, sep="/")), # The 15th of each month on a non-leap year
                        SalSurf=seq(round(min(data_filt$SalSurf), 1), 
                                    round(max(data_filt$SalSurf), 1), by=0.1))%>% # Salinity sequence nicely rounded to 1 decimal
     mutate(Month=month(date),
@@ -141,8 +147,7 @@ newdata<-map(set_names(unique(pseudo_data_mass$Region)), newdata_function)
 # From https://stats.stackexchange.com/questions/190348/can-i-use-bootstrapping-to-estimate-the-uncertainty-in-a-maximum-value-of-a-gam
 predict_posterior<-function(model, newdata, exclude, n=1e3, seed=999){
   Xp <- predict(model, newdata=newdata, 
-                #type="lpmatrix", 
-                type = "response",
+                type="lpmatrix", 
                 exclude=exclude, newdata.guaranteed=TRUE) ## map coefs to fitted curves
   beta <- coef(model)
   Vb   <- vcov(model) ## posterior mean and cov of coefs
@@ -157,6 +162,8 @@ predict_posterior<-function(model, newdata, exclude, n=1e3, seed=999){
   pred<-as_tibble(pred)
   return(pred)
 }
+
+
 
 ps_model<-function(region,new_data=newdata, datain = pseudo_data_mass){
   
@@ -411,6 +418,13 @@ load("Data/sfhazoops.RData")
 #now add it to the plot of the ealier data
 load("data/pseudo_data_mass.RData")
 
+zoopsflow = bind_rows(pseudo_data_mass2, pseudo_data_mass) %>%
+  
+  left_join(select(filter(Dayflow,OUT >0), Date, Year, Month, OUT)) %>%
+  mutate(logout = log(OUT), logout_s = scale(logout)) %>%
+  filter(!is.na(OUT), doy %in% c(150:310), Year >= 1995)
+
+
 #########plotforitp ammendment #############
 ggplot(filter(pseudo_recent, Month%in% c(6:10)),  aes(x = as.factor(Month), y = BPUE, fill = YrType,))+ 
   geom_boxplot()+facet_wrap(~Region)+
@@ -435,15 +449,6 @@ ggplot(filter(ps_conversions_plot, Month %in% c(6:10)), aes(x=SalSurf, y=median,
 
 ggsave("plots/PseudoGAM_wresid_salonly.tiff", width = 8, height = 6, device = "tiff")
 
-ggplot(ps_conversions_plot, aes(x=SalSurf, y=median, ymin=l95, ymax=u95))+
-  geom_ribbon(alpha=0.4)+
-  geom_line()+
-  ylab("Pseudodiaptomus biomass (log scale)")+
-  geom_point(data = pseudo_recent, aes(color = Action, x = SalSurf, y = BPUE), inherit.aes = F)+
-  facet_grid(Region~month(Month, label=T))+
-  scale_fill_viridis_d()+
-  theme_bw()+
-  theme(axis.text.x=element_text(angle=45, hjust=1))
 
 ### Residuals ##########################################################
 
@@ -452,7 +457,8 @@ ggplot(ps_conversions_plot, aes(x=SalSurf, y=median, ymin=l95, ymax=u95))+
 pseudo_recent_wpred = mutate(pseudo_recent, Sal = SalSurf, SalSurf = round(SalSurf, digits =1)) %>%
   left_join(ps_conversions_plot) %>%
   mutate(residual = median - BPUE,
-         YrType = factor(YrType, levels = c("C", "D", "BN", "AN", "W")))
+         YrType = factor(YrType, levels = c("C", "D", "BN", "AN", "W"))) %>%
+  filter(Month %in% c(6:10))
 
 ggplot(pseudo_recent_wpred, aes(x = as.factor(Month), y = residual, fill = Action, color = Action))+
   geom_boxplot()+
@@ -536,7 +542,7 @@ plot(allEffects(downlm))
 
 
 zoop_data_all<-Zoopsynther(Data_type="Community", Sources=c("EMP", "STN", "20mm", "FMWT"), 
-                       Time_consistency = FALSE, Years = c(1995:2022))
+                       Time_consistency = FALSE, Years = c(1995:2024))
 zoop_groups<-read_csv(here("Data/zoopcrosswalk2.csv"), col_types=cols_only(Taxlifestage="c", IBMR="c"))%>%
   distinct()
 
@@ -596,6 +602,12 @@ ggplot(filter(zoopsall, Month %in% c(6:10), !is.na(IBMR)),
 #need to do this with flow, not salinity
 zoopsall_f = left_join(zoopsall, Dayflow)
 
+SFHApal = c(`River` = "#FEE08b", #combined with confluence
+            `Suisun Bay` = "darkblue", 
+            `Grizzly Bay` = "cyan3", 
+            `Suisun Marsh` = "#f46d43")
+
+
 ggplot(filter(zoopsall_f, Month %in% c(6:10), !is.na(IBMR)), 
        aes(x = OUT, y =  CPUE_log1p, color = Region))+
   facet_wrap(~IBMR, scales = "free_y")+
@@ -607,7 +619,10 @@ ggplot(filter(zoopsall_f, Month %in% c(6:10), !is.na(IBMR), IBMR != "other"),
   facet_wrap(~IBMR, nrow =5, scales = "free_y")+
   geom_smooth(method = "gam", formula = y ~ s(x, bs = "cs", k = 5))+
 #geom_smooth(method = "lm")+
-  theme_bw()
+  theme_bw()+scale_color_manual(values = SFHApal)+
+  ylab("Log-transformed abundance (catch per cubic meter)")+
+  xlab("Log-transformed net Delta Outflow (CFS)")
+  
 
 ggsave("plots/flow_abundance_zoops.tiff", width = 8, height = 9, device = "tiff")
 
@@ -706,11 +721,37 @@ geom_sf(data = Regions, aes(fill = Region), alpha = 0.5)+
 ###########################################################################
 ###zoop-salnith AND flow gams ##################
 
-zoopsflow = bind_rows(pseudo_data_mass2, pseudo_data_mass) %>%
-  
-  left_join(select(filter(Dayflow,OUT >0), Date, Year, Month, OUT)) %>%
-  mutate(logout = log(OUT), logout_s = scale(logout)) %>%
-  filter(!is.na(OUT), doy %in% c(150:310))
+
+##########################################
+#Do I need bootstrapping? Or just the response matrix?
+foolp = predict(modelgz, newdata=mutate(newdata_flow[[3]], Station_fac = "602"), type = "lpmatrix",
+              newdata.guaranteed=TRUE)
+
+foor = predict(modelgz, newdata=mutate(newdata_flow[[3]], Station_fac = "602"), type = "response",
+              newdata.guaranteed=TRUE, se.fit = T)
+
+dattt = mutate(newdata_flow[[3]], Station_fac = "602") %>%
+  bind_cols(foor[1], foor[2])
+
+ggplot(filter(dattt, Type == "Salinity"), aes(x = SalSurf, y = fit))+ geom_line()+ geom_point()+
+         geom_ribbon(aes(ymin = fit-se.fit, ymax = fit+se.fit), alpha = 0.2)+
+  facet_wrap(~Month)+
+  geom_point(data = filter(pseudo_recent, Month %in% c(6:10), Region == "Grizzly Bay"), 
+             aes(x = SalSurf, y = BPUE, color = YrType), inherit.aes = F)+
+  scale_color_manual(values = c("darkred", "orange", "yellow2", "springgreen4", "blue" ), name = "Year Type", guide = "none")
+
+
+ggplot(filter(dattt, Type == "out"), aes(x = logout, y = fit))+ geom_line()+ geom_point()+
+  geom_ribbon(aes(ymin = fit-se.fit, ymax = fit+se.fit), alpha = 0.2)+
+  facet_wrap(~Month)+
+  geom_point(data = filter(pseudo_recent, Month %in% c(6:10), Region == "Grizzly Bay"), 
+             aes(x = logout, y = BPUE, color = YrType), inherit.aes = F)+
+  scale_color_manual(values = c("darkred", "orange", "yellow2", "springgreen4", "blue" ), name = "Year Type", guide = "none")
+
+
+
+
+
 
 newdata_functionflow<-function(region, data=zoopsflow, quant=0.99){
   
@@ -740,12 +781,13 @@ newdata_functionflow<-function(region, data=zoopsflow, quant=0.99){
     mutate(Month=month(date),
            Type = "Salinity",
            doy=yday(date), # Day of year
+           Year_fac = as.factor(year(date)),
            SalSurf_s=(SalSurf-mean(data$SalSurf))/sd(data$SalSurf), # center and standardize salinity to match data
            logout_s=(logout-mean(data$logout))/sd(data$logout),
            doy_s=(doy-mean(data$doy))/sd(data$doy))%>% # center and standardize doy to match data
     left_join(month_sal, by="Month")%>%
     filter(SalSurf >= l & SalSurf <= u)%>% # Remove any salinity values outside the quantiles for each month
-    select(Month, doy, doy_s, SalSurf, SalSurf_s, logout, logout_s, Type)
+    select(Month, doy, doy_s, SalSurf, SalSurf_s, logout, logout_s, Type, Year_fac)
   
   newdata_out<-expand_grid(date=mdy(paste(6:10, 15, 2001, sep="/")), # The 15th of each month on a non-leap year
                        SalSurf=mean(data_filt$SalSurf),
@@ -754,13 +796,15 @@ newdata_functionflow<-function(region, data=zoopsflow, quant=0.99){
     mutate(Month=month(date),
            Type = "out",
            doy=yday(date), # Day of year
+           
+           Year_fac = as.factor(year(date)),
            SalSurf_s=(SalSurf-mean(data$SalSurf))/sd(data$SalSurf), # center and standardize salinity to match data
            logout_s=(logout-mean(data$logout))/sd(data$logout),
            doy_s=(doy-mean(data$doy))/sd(data$doy))%>% # center and standardize doy to match data
     left_join(month_out, by="Month")%>%
     filter(logout >= lo & logout <= uo)%>% # Remove any salinity values outside the quantiles for each month
     
-    select(Month, doy, doy_s, SalSurf, SalSurf_s, logout, logout_s, Type)
+    select(Month, doy, doy_s, SalSurf, SalSurf_s, logout, logout_s, Type, Year_fac)
   
   newdata = bind_rows(newdata_sal, newdata_out)
   
@@ -782,7 +826,7 @@ ps_modelflow<-function(region,new_data=newdata_flow, type = "Both"){
   if(type == "Both") {
   
   if(length(unique(data$Station_fac))>1){
-    model<-gam(BPUE_log1p ~ te(SalSurf_s, doy_s,k =c(5,5), bs=c("cs", "cc")) + 
+    model<-gam(BPUE_log1p ~ te(SalSurf_s, doy_s,k =c(5,5), bs=c("cs", "cs")) + 
                  te(logout_s, doy_s, k=c(5,5), bs=c("cs", "cc")) + 
                  s(Year_fac, bs="re") + s(Station_fac, bs="re"),
                data=data, 
@@ -946,14 +990,14 @@ pout2
 ggsave(filename = "plots/PseudoGamOutflow.tiff", device = "tiff", width = 8, height = 6)
 
 #models individually, to grab summaries later.
-modelgz<-gam(BPUE_log1p ~ te(SalSurf_s, doy_s, k=c(5,5), bs=c("cs", "cc")) + 
+modelgz<-gam(BPUE_log1p ~ te(SalSurf_s, doy_s, k=c(5,5), bs=c("cs", "cs")) + 
              te(logout_s, doy_s, k=c(5,5), bs=c("cs", "cc")) + 
              s(Year_fac, bs="re") + s(Station_fac, bs="re"),
            data=filter(zoopsflow, Region == "Grizzly Bay"), 
            method="REML")
 plot(modelgz)
 
-modelsm<-gam(BPUE_log1p ~ te(SalSurf_s, doy_s, k=c(5,5), bs=c("cs", "cc")) + 
+modelsm<-gam(BPUE_log1p ~ te(SalSurf_s, doy_s, k=c(5,5), bs=c("cs", "cs")) + 
                te(logout_s, doy_s, k=c(5,5), bs=c("cs", "cc")) + 
                s(Year_fac, bs="re") + s(Station_fac, bs="re"),
              data=filter(zoopsflow, Region == "Suisun Marsh"), 
@@ -961,14 +1005,14 @@ modelsm<-gam(BPUE_log1p ~ te(SalSurf_s, doy_s, k=c(5,5), bs=c("cs", "cc")) +
 plot(modelsm)
 
 
-modelsb<-gam(BPUE_log1p ~ te(SalSurf_s, doy_s, k=c(5,5), bs=c("cs", "cc")) + 
+modelsb<-gam(BPUE_log1p ~ te(SalSurf_s, doy_s, k=c(5,5), bs=c("cs", "cs")) + 
                te(logout_s, doy_s, k=c(5,5), bs=c("cs", "cc")) + 
                s(Year_fac, bs="re") + s(Station_fac, bs="re"),
              data=filter(zoopsflow, Region == "Suisun Bay"), 
              method="REML")
 plot(modelsb)
 
-modelsr<-gam(BPUE_log1p ~ te(SalSurf_s, doy_s, k=c(5,5), bs=c("cs", "cc")) + 
+modelsr<-gam(BPUE_log1p ~ te(SalSurf_s, doy_s, k=c(5,5), bs=c("cs", "cs")) + 
                te(logout_s, doy_s, k=c(5,5), bs=c("cs", "cc")) + 
                s(Year_fac, bs="re") + s(Station_fac, bs="re"),
              data=filter(zoopsflow, Region == "River"), 
@@ -980,7 +1024,7 @@ summary(modelsm)
 summary(modelgz)
 
 #models individually, to grab summaries later.
-modelgz1<-gam(BPUE_log1p ~ te(SalSurf_s, doy_s, k=c(5,5), bs=c("cs", "cc")) + 
+modelgz1<-gam(BPUE_log1p ~ te(SalSurf_s, doy_s, k=c(5,5), bs=c("cs", "cs")) + 
                
                s(Year_fac, bs="re") + s(Station_fac, bs="re"),
              data=filter(zoopsflow, Region == "Grizzly Bay"), 
@@ -990,14 +1034,13 @@ library(mgcViz)
 gz1p = getViz(modelgz1)
 gam.check(modelgz1)
 
-#all those zeros are an issue
 
 o <- plot( sm(gz1p, 1) )
 o + l_fitRaster() + 
   l_fitContour() + 
   l_points(shape = 19, size = 1, alpha = 0.1) + theme_classic()
 
-modelsm1<-gam(BPUE_log1p ~ te(SalSurf_s, doy_s, k=c(5,5), bs=c("cs", "cc")) + 
+modelsm1<-gam(BPUE_log1p ~ te(SalSurf_s, doy_s, k=c(5,5), bs=c("cs", "cs")) + 
                 
                s(Year_fac, bs="re") + s(Station_fac, bs="re"),
              data=filter(zoopsflow, Region == "Suisun Marsh"), 
@@ -1005,14 +1048,14 @@ modelsm1<-gam(BPUE_log1p ~ te(SalSurf_s, doy_s, k=c(5,5), bs=c("cs", "cc")) +
 
 
 
-modelsb1<-gam(BPUE_log1p ~ te(SalSurf_s, doy_s, k=c(5,5), bs=c("cs", "cc")) + 
+modelsb1<-gam(BPUE_log1p ~ te(SalSurf_s, doy_s, k=c(5,5), bs=c("cs", "cs")) + 
                
                s(Year_fac, bs="re") + s(Station_fac, bs="re"),
              data=filter(zoopsflow, Region == "Suisun Bay"), 
              method="REML")
 
 
-modelsr1<-gam(BPUE_log1p ~ te(SalSurf_s, doy_s, k=c(5,5), bs=c("cs", "cc")) + 
+modelsr1<-gam(BPUE_log1p ~ te(SalSurf_s, doy_s, k=c(5,5), bs=c("cs", "cs")) + 
                 
                s(Year_fac, bs="re") + s(Station_fac, bs="re"),
              data=filter(zoopsflow, Region == "River"), 
@@ -1020,14 +1063,14 @@ modelsr1<-gam(BPUE_log1p ~ te(SalSurf_s, doy_s, k=c(5,5), bs=c("cs", "cc")) +
 
 #now flow only
 
-modelgz2<-gam(BPUE_log1p ~ te(logout_s, doy_s, k=c(5,5), bs=c("cs", "cc")) + 
+modelgz2<-gam(BPUE_log1p ~ te(logout_s, doy_s, k=c(5,5), bs=c("cs", "cs")) + 
                 
                 s(Year_fac, bs="re") + s(Station_fac, bs="re"),
               data=filter(zoopsflow, Region == "Grizzly Bay"), 
               method="REML")
 
 
-modelsm2<-gam(BPUE_log1p ~ te(logout_s, doy_s, k=c(5,5), bs=c("cs", "cc")) + 
+modelsm2<-gam(BPUE_log1p ~ te(logout_s, doy_s, k=c(5,5), bs=c("cs", "cs")) + 
                 
                 s(Year_fac, bs="re") + s(Station_fac, bs="re"),
               data=filter(zoopsflow, Region == "Suisun Marsh"), 
@@ -1035,48 +1078,71 @@ modelsm2<-gam(BPUE_log1p ~ te(logout_s, doy_s, k=c(5,5), bs=c("cs", "cc")) +
 
 
 
-modelsb2<-gam(BPUE_log1p ~ te(logout_s, doy_s, k=c(5,5), bs=c("cs", "cc")) + 
+modelsb2<-gam(BPUE_log1p ~ te(logout_s, doy_s,  k=c(5,5), bs=c("cs", "cs")) + 
                 
                 s(Year_fac, bs="re") + s(Station_fac, bs="re"),
               data=filter(zoopsflow, Region == "Suisun Bay"), 
               method="REML")
 
 
-modelsr2<-gam(BPUE_log1p ~ te(logout_s, doy_s, k=c(5,5), bs=c("cs", "cc")) + 
+modelsr2<-gam(BPUE_log1p ~ te(logout_s, doy_s, k=c(5,5), bs=c("cs", "cs")) + 
                 
                 s(Year_fac, bs="re") + s(Station_fac, bs="re"),
               data=filter(zoopsflow, Region == "River"), 
               method="REML")
 
-summary(modelgz) #91.4% - both
-summary(modelgz1) #91% - salinity only
-summary(modelgz2) #90.7% - flow only
+summary(modelgz) #80% - both
+concurvity(modelgz, full =F)
+BIC(modelgz) #1305
+summary(modelgz1) #78.7% - salinity only
+concurvity(modelgz1, full =F)
+BIC(modelgz1) #1298.1
+
+summary(modelgz2) #78.6% - flow only
+BIC(modelgz2) #1308
+concurvity(modelgz1, full =F)
 #very similar ammount of variancec explained, probably because of the effect of DOY and random effects
-summary(modelsm) #93.3 - both
-summary(modelsm1) # 92.7% - salinity only
-summary(modelsm2) #92.3%0 - flow only
+
+summary(modelsm) #85.6 - both
+BIC(modelsm) #3675
+concurvity(modelsm, full = F)
+summary(modelsm1) # 84.8% - salinity only
+BIC(modelsm1) #3650
+summary(modelsm2) #81.8 - flow only
+BIC(modelsm2) #3881
 #huh
 
-summary(modelsb) #90.1%
-summary(modelsb1) #89.8%
-summary(modelsb2) #88.9% 
+summary(modelsb) #80.2 - both
+BIC(modelsb) #5645
+concurvity(modelsb, full = F)
+summary(modelsb1) #79.6 - salinity
+BIC(modelsb1) #5630
+summary(modelsb2) #70.8 - outflow
+BIC(modelsb2) #6194
 #also very simiarl
 
 
-summary(modelsr) #93.1%
-summary(modelsr1) #92.7%
-summary(modelsr2) # 91.3%
+summary(modelsr) #65.2% 
+BIC(modelsr) #9129
+concurvity(modelsr, full = F)
+summary(modelsr1) #61.9%
+BIC(modelsr1) #9280
+summary(modelsr2) # 42.2%
+BIC(modelsr2) #10119
 
 gam.check(modelsr2)
 BIC(modelsr) #both
+concurvity(modelsr) #So, worse-case they are 99% convurve, but observed is only 59% and esitmate is 24%. 
+#i'm guessing we can't use both. 
+
 BIC(modelsr1) #salinity only
 BIC(modelsr2) # flow only
-#model with both ranked quite a bit better
+#model with both ranked quite a bit better for the river, but salinity only was better in other regions
 
 #how correlated are things?
-ggplot(zoopsflow, aes(x = doy, y = SalSurf))+geom_smooth()+ facet_wrap(~Region)
+ggplot(zoopsflow, aes(x = doy, y = SalSurf))+geom_smooth()+ geom_point()+ facet_wrap(~Region)
 ggplot(zoopsflow, aes(x = doy, y = logout))+geom_smooth()+ facet_wrap(~Region)
-ggplot(zoopsflow, aes(x = SalSurf, y = logout))+geom_smooth()+ facet_wrap(~Region)
+ggplot(zoopsflow, aes(x = SalSurf, y = logout))+geom_smooth()+ facet_wrap(~Region) + geom_point()
 ggplot(zoopsflow, aes(x = SalSurf, y = logout))+geom_smooth()+ facet_grid(Month~Region)
 
 

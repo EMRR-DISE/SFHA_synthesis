@@ -238,3 +238,25 @@ EDSMsmelt = bind_rows(EDSM20mm, EDSMSKT) %>%
 EDSMsmeltall =  filter(health, survey_char == "edsm") %>%
   select(fish_id, casette_number, collection_date) %>%
   left_join(EDSMsmelt, by = c("fish_id" = "DOPID"))
+
+
+##########liver lesions #####################
+
+names(health)
+livers = filter(health, season %in% c("Summer", "Fall"), fork_length <70, !is.na(region), !is.na(liver_lesions))
+
+ggplot(livers, aes(x = region1, y = liver_lesions, fill = season)) +
+  # facet_wrap(~region1)+
+  geom_boxplot()+
+  ylab("liver_lesions")
+
+ggplot(livers, aes(x = cohort...7, y = liver_lesions, fill = season)) +
+   facet_wrap(~region1)+
+  geom_boxplot()+
+  ylab("liver_lesions")
+#ugh, not a lot of data.
+
+ggplot(livers, aes(x = cohort...7, y = liver_lesions, fill = season)) +
+  facet_wrap(~region1)+
+  geom_boxplot()+
+  ylab("liver_lesions")

@@ -3,6 +3,14 @@
 library(tidyverse)
 library(readxl)
 
+library(lme4)
+library(lmerTest)
+
+
+library(MuMIn)
+library(car)
+library(effects)
+
 #Note: in Lewis et 2021, growth rate (msgr) was log10 transformed and age corrected before use in models
 
 #msgr: reconstructed mean somatic growth rate of the final 14 days prior to capture
@@ -25,6 +33,7 @@ library(readxl)
 #little to the fit of intrinsic growth models (Fig. 3B), indicating that marginal growth rates were largely 
 #independent of early growth history. 
 
+#import data
 otoliths = read_excel("data/otolith data_for_export.xlsx", sheet = "data") %>%
   mutate(Year = year(date), Month = month(date))
 
@@ -46,10 +55,11 @@ otonums = group_by(falloto, Year, edsmstratum) %>%
 ggplot(falloto, aes(x = as.factor(Year), y = msgr)) + geom_boxplot()+
   facet_wrap(~edsmstratum)+ geom_label(data = otonums, aes(y = 0, label = N))
 
-
+#some relationship with salinity, similar to Levi's previous work
 ggplot(falloto, aes(x = log(sal), y = msgr)) + geom_point(aes(color = as.factor(Year)))+
   geom_smooth(method = "lm")
 
+#2011 is just WAY higher than the other years
 ggplot(falloto, aes(x = temp, y = msgr)) + geom_point(aes(color = as.factor(Year)))+
   geom_smooth(method = "lm")
 
@@ -66,18 +76,20 @@ summary(agerate)
 plot(agerate)
 falloto$resid = residuals(agerate)
 
-
+#plot the age-corrected growth rate
+#negative effect of temperature, also found by Lewis et al 2021
 ggplot(falloto, aes(x = temp, y = resid)) + geom_point(aes(color = as.factor(Year)))+
   geom_smooth(method = "lm")+
   ylab("log-transformed, age-corrected, 14-day growth rate")+
   xlab("water temperature")
 
-
+#there is a fair amount of data in teh lower sacramento region, not much from other areas
 ggplot(filter(falloto, edsmstratum == "Lower Sacramento"), aes(x = temp, y = resid)) + geom_point(aes(color = as.factor(Year)))+
   geom_smooth(method = "lm")+
   ylab("log-transformed, age-corrected, 14-day growth rate")+
   xlab("water temperature")
 
+#does a non-linear model fit better?
 ggplot(filter(falloto, edsmstratum == "Lower Sacramento"), aes(x = log(sal), y = resid)) + geom_point(aes(color = as.factor(Year)))+
   geom_smooth()+
   ylab("log-transformed, age-corrected, 14-day growth rate")+
@@ -86,13 +98,15 @@ ggplot(filter(falloto, edsmstratum == "Lower Sacramento"), aes(x = log(sal), y =
 ggplot(falloto, aes(x = log(sal), y = resid)) + geom_point(aes(color = as.factor(Year)))+
   geom_smooth(method = "lm")
 
+#look by year - no clear trend by water year type.
 ggplot(falloto, aes(x = as.factor(Year), y = resid)) + geom_boxplot()+ 
   ylab("log-transformed, age-corrected, 14-day growth rate")
 
+#plot by region - Cache Slough is a bit lower, but other regions all overlap
 ggplot(falloto, aes(x = edsmstratum, y = resid)) + geom_boxplot()+ 
   ylab("log-transformed, age-corrected, 14-day growth rate")
 
-
+#data are too sparse to really see trends
 ggplot(falloto, aes(x = as.factor(Year), y = resid)) + geom_boxplot()+
   facet_wrap(~edsmstratum)+ ylab("log-transformed, age-corrected, 14-day growth rate")
 
@@ -127,12 +141,14 @@ DF = mutate(DF, Season = case_when(Mo %in% c(3,4,5) ~ "Spring",
 falloto = left_join(falloto, DF, by = c("date" = "Date", "Year" = "Year2")) %>%
   mutate(DOY = yday(date), Yearf = as.factor(Year))
 
+#very weak trend with X2, probably not significant
 ggplot(falloto, aes(x = X2, y = resid)) + geom_point(aes(color = as.factor(Year)))+
   geom_smooth(method = "lm")+
   #facet_wrap(~as.factor(edsmstratum))+
   ylab("log-transformed, age-corrected, 14-day growth rate")+
   xlab("X2")
 
+#if i limit it to the sacramento river region (where I have the most data) there is reallynothing there at all.
 ggplot(filter(falloto, edsmstratum == "Lower Sacramento"), aes(x = X2, y = resid)) + geom_point(aes(color = as.factor(Year)))+
   geom_smooth(method = "lm")+
   #facet_wrap(~as.factor(edsmstratum))+
@@ -149,9 +165,6 @@ ggplot(falloto, aes(x = DOY, y = resid)) + geom_point(aes(color = as.factor(Year
 
 #Let's just dredge through all possible models. That's always useful.
 
-library(MuMIn)
-library(car)
-library(effects)
 
 #scale and center everythign
 falloto = mutate(falloto, X2s = scale(X2), temps = scale(temp), ages = scale(age))
@@ -180,7 +193,17 @@ summary(otos)
 vif(otos)
 #why is age  important if it's supposidly the age-corrected growth rate? something to look into. 
 
+#diagnostic plots
+plot(otos)
+
+#effects plots
 plot(allEffects(otos))
 
 #The fact that the interaction doesn't come out as important makes me think it's not really picking
-#up an X2 effect. The sampling is really just too unbalanced. 
+#up an X2 effect. The sampling is really just too unbalanced. And X2 is so correlated with year....
+
+#maybe I can add year as a random effect?
+
+otos2 = lmer(resid ~ X2s+edsmstratum+temps+ages + (1|Yearf), data = falloto, na.action = "na.fail") 
+summary(otos2)
+#yeah, with year as a random effect the impact of X2 goes away.
