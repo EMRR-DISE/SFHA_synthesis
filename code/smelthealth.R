@@ -256,7 +256,16 @@ ggplot(livers, aes(x = cohort...7, y = liver_lesions, fill = season)) +
   ylab("liver_lesions")
 #ugh, not a lot of data.
 
-ggplot(livers, aes(x = cohort...7, y = liver_lesions, fill = season)) +
+ggplot(livers, aes(x = x2_mean, y = liver_lesions, color = season)) +
   facet_wrap(~region1)+
-  geom_boxplot()+
+  geom_point()+
+  geom_smooth(method = "lm")+
+  ylab("liver_lesions")
+
+
+
+ggplot(livers, aes(x = x2_mean, y = liver_lesions)) +
+  facet_wrap(~region1)+
+  geom_point(aes(color = Day))+
+  geom_smooth(method = "lm")+
   ylab("liver_lesions")
